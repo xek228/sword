@@ -99,13 +99,55 @@ body.controller {
 .error-box ol { padding-left: 22px; margin: 6px 0; }
 .error-box li { margin: 6px 0; }
 
-#play-ui { display: flex; flex-direction: column; gap: 16px; flex: 1; }
-.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.stat-grid > div {
+#play-ui { display: flex; flex-direction: column; gap: 14px; flex: 1; }
+
+.debug-panel {
   background: #121723; border: 1px solid #1c2231;
-  padding: 10px 12px; border-radius: 10px; display: flex; justify-content: space-between;
+  padding: 10px 12px; border-radius: 10px;
+  display: flex; flex-direction: column; gap: 8px;
 }
-.stat-grid span { color: var(--dim); }
+.bar-row {
+  display: grid; grid-template-columns: 28px 1fr 44px;
+  align-items: center; gap: 8px; font-size: 13px;
+}
+.bar-row.small { grid-template-columns: 28px 1fr; }
+.bar-row span { color: var(--dim); }
+.bar-row b { text-align: right; font-variant-numeric: tabular-nums; }
+.bar-track {
+  height: 10px; background: #0b0f18; border-radius: 6px; overflow: hidden;
+  border: 1px solid #1c2231;
+}
+.bar-fill {
+  height: 100%; width: 0%; transition: width 60ms linear;
+  background: var(--accent);
+}
+.bar-fill.acc  { background: #f0b429; }
+.bar-fill.gyro { background: #5ab4ff; }
+.stat-row {
+  display: flex; gap: 14px; font-size: 12px; color: var(--dim);
+  flex-wrap: wrap;
+}
+.stat-row b { color: var(--fg); }
+.scores-row {
+  display: flex; gap: 8px; flex-wrap: wrap; font-size: 11px;
+  font-family: ui-monospace, monospace; color: var(--dim);
+}
+.scores-row span.win { color: var(--accent); font-weight: 600; }
+
+.slider-row {
+  display: flex; flex-direction: column; gap: 6px;
+  background: #121723; border: 1px solid #1c2231;
+  padding: 10px 12px; border-radius: 10px;
+}
+.slider-row label { font-size: 13px; color: var(--dim); }
+.slider-row label b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.slider-row input[type="range"] { width: 100%; }
+
+.calib-bars {
+  display: flex; flex-direction: column; gap: 6px;
+  background: #0b0f18; border: 1px solid #1c2231;
+  padding: 8px 10px; border-radius: 8px;
+}
 #touch-pad { display: flex; flex-direction: column; gap: 12px; }
 .big {
   padding: 22px; font-size: 18px; border-radius: 14px;

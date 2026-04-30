@@ -138,7 +138,15 @@ function attachWs(wss) {
 
       if (msg.type === "motion") {
         const event = room.detector.ingest(msg);
-        if (event) broadcast(room.games, { type: "attack", ...event });
+        if (event) {
+          broadcast(room.games, { type: "attack", ...event });
+          // Also echo debug info (incl. template scores) back to the
+          // controller so the phone's debug panel can show "why" live.
+          const dbg = room.detector.lastDebug || {};
+          ws.send(JSON.stringify({ type: "attack-debug", ...event, scores: dbg.scores || null }));
+        }
+      } else if (msg.type === "sensitivity") {
+        room.detector.setSensitivity(Number(msg.value));
       } else if (msg.type === "button") {
         // Pass-through for discrete buttons (block, attack trigger, etc.)
         broadcast(room.games, { type: "button", ...msg });

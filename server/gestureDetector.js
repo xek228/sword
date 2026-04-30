@@ -1,186 +1,264 @@
 // Converts a stream of DeviceMotion samples (acceleration + rotation rate)
 // into discrete 4-directional "swings" + thrusts, Mount & Blade-style.
 //
+// Design rationale (after testing the original axis-based classifier):
+//
+// A sword-style swing is fundamentally a *rotation*. When the user holds the
+// phone at the grip, linear acceleration at the grip can be small (all the
+// speed is at the "blade tip"), but the angular velocity is very clear and
+// uniquely-directed per swing type. So: fuse linear accel + angular velocity
+// into a single 6D peak vector and classify by cosine similarity to
+// user-recorded templates. This is grip-invariant as long as the user always
+// holds the phone the same way when playing.
+//
+// Signals:
+//   a = acceleration (m/s^2, gravity removed if possible) in phone frame
+//   ω = rotationRate (deg/s) in phone frame; converted to rad/s internally
+// Peak fires when  max(|a| / ACC_SCALE, |ω| / GYRO_SCALE) > sensitivity.
+//
 // Two classification modes:
 //   1. Axis-based (default): pick the dominant signed-axis peak in the
-//      assumed "phone held in portrait" frame. Robust but assumes the
-//      user holds the phone the way the defaults expect.
-//   2. Template-based (after calibration): store one recorded peak
-//      acceleration vector per direction, classify new swings by
-//      max cosine similarity to those templates. Handles arbitrary
-//      phone orientation and per-user swing style.
+//      assumed "phone held in portrait" frame. Robust first-use but
+//      assumes the user holds the phone the way the defaults expect.
+//   2. Template-based (after calibration): cosine similarity of the peak
+//      6D vector against recorded templates; largest wins. Handles any
+//      grip and per-user swing style.
 //
-// Calibration: setCalibrationMode(direction) tells the detector to
-// record the peak vector of the next motion burst into templates[direction].
-// The calibrator is responsible for driving this sequence from the client.
+// Calibration flow: startCalibration(direction) → server ingests swing →
+// endCalibration() returns { direction, accel, gyro, score } or null.
 
-const SWING_PEAK_G = 18;          // m/s^2, typical hard shake is ~20-40
-const THRUST_PEAK_G = 14;         // thrust is usually softer but more axial
-const REFRACTORY_MS = 350;        // don't fire again for this long after a swing
-const WINDOW_MS = 200;            // look back this far to find the dominant axis
-const CALIB_MIN_PEAK = 8;         // below this, a calibration swing is rejected
-const TEMPLATE_MIN_COSINE = 0.35; // below this, template classification bails out
+// --- Tunables -------------------------------------------------------------
+
+// Normalisation so accel (m/s^2) and gyro (rad/s) contribute similarly to
+// peak magnitude. A typical "brisk swing" is ~15 m/s^2 OR ~5 rad/s.
+const ACC_SCALE  = 15;
+const GYRO_SCALE = 5;
+
+// Peak thresholds in the normalised units. `SENSITIVITY` scales these: the
+// controller can adjust it (0.5 = very sensitive, 2.0 = needs a hard swing).
+const BASE_PEAK = 1.0;
+
+const REFRACTORY_MS       = 350;  // don't fire again for this long after a swing
+const WINDOW_MS           = 250;  // look-back window to find the dominant peak
+const CALIB_MIN_PEAK      = 0.6;  // reject very weak calibration swings
+const TEMPLATE_MIN_COSINE = 0.45; // reject low-confidence template matches
 
 const DIRECTIONS = ["up", "down", "left", "right", "thrust"];
 
-function dot(a, b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-function norm(v)   { return Math.hypot(v.x, v.y, v.z); }
-function cosSim(a, b) {
-  const na = norm(a), nb = norm(b);
-  if (na === 0 || nb === 0) return 0;
-  return dot(a, b) / (na * nb);
+// --- Math helpers ---------------------------------------------------------
+
+const DEG2RAD = Math.PI / 180;
+
+function dot6(a, b) {
+  return a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3] + a[4]*b[4] + a[5]*b[5];
 }
+function norm6(v) {
+  return Math.hypot(v[0], v[1], v[2], v[3], v[4], v[5]);
+}
+function cosSim6(a, b) {
+  const na = norm6(a), nb = norm6(b);
+  if (na === 0 || nb === 0) return 0;
+  return dot6(a, b) / (na * nb);
+}
+
+function norm3(x, y, z) { return Math.hypot(x, y, z); }
+
+// Normalise a raw [ax,ay,az,ωx,ωy,ωz] (SI units) into the unitless 6D space
+// used for peak + template comparisons.
+function toFeature(ax, ay, az, wx, wy, wz) {
+  return [
+    ax / ACC_SCALE, ay / ACC_SCALE, az / ACC_SCALE,
+    wx / GYRO_SCALE, wy / GYRO_SCALE, wz / GYRO_SCALE,
+  ];
+}
+
+// --- Detector -------------------------------------------------------------
 
 export class GestureDetector {
   constructor() {
-    this.samples = [];             // recent samples in window
+    this.samples = [];        // recent samples: {t, a:{x,y,z}, w:{x,y,z}, feat, mag}
     this.lastFireAt = 0;
-    this.inSwing = false;
-    this.gravity = { x: 0, y: 0, z: -9.81 }; // slow-tracked gravity estimate
+    this.inBurst = false;
+    this.sensitivity = 1.0;   // multiplier on peak threshold (low = sensitive)
 
-    this.templates = {};           // { direction: { v: {x,y,z}, mag } }
-    this.calibDirection = null;    // if set, next peak is stored under this dir
+    this.templates = {};      // { direction: { feat: number[6], mag } }
+    this.calibDirection = null;
+    this.calibSamples = [];
+
+    // Last classification, for the controller's debug overlay.
+    this.lastDebug = null;
+  }
+
+  // Allows the UI to persist a sensitivity tweak.
+  setSensitivity(s) {
+    if (typeof s === "number" && Number.isFinite(s) && s > 0) {
+      this.sensitivity = Math.max(0.2, Math.min(3.0, s));
+    }
   }
 
   calibrate() {
     this.samples = [];
     this.lastFireAt = 0;
-    this.inSwing = false;
+    this.inBurst = false;
     this.calibDirection = null;
+    this.calibSamples = [];
   }
 
   setTemplates(templates) {
     const cleaned = {};
     for (const d of DIRECTIONS) {
       const t = templates && templates[d];
-      if (t && t.v && Number.isFinite(t.v.x) && Number.isFinite(t.v.y) && Number.isFinite(t.v.z)
-          && Number.isFinite(t.mag) && t.mag >= CALIB_MIN_PEAK) {
-        cleaned[d] = { v: { x: t.v.x, y: t.v.y, z: t.v.z }, mag: t.mag };
-      }
+      if (!t || !Array.isArray(t.feat) || t.feat.length !== 6) continue;
+      if (!t.feat.every(Number.isFinite)) continue;
+      if (!Number.isFinite(t.mag) || t.mag < CALIB_MIN_PEAK) continue;
+      cleaned[d] = { feat: t.feat.slice(), mag: t.mag };
     }
     this.templates = cleaned;
   }
 
-  clearTemplates() {
-    this.templates = {};
-  }
-
-  getTemplates() {
-    return this.templates;
-  }
+  clearTemplates() { this.templates = {}; }
+  getTemplates()   { return this.templates; }
 
   startCalibration(direction) {
     if (!DIRECTIONS.includes(direction)) return false;
     this.calibDirection = direction;
+    this.calibSamples = [];
     this.samples = [];
-    this.inSwing = false;
+    this.inBurst = false;
     return true;
   }
 
-  // Call after the user performs the calibration swing. Returns the captured
-  // peak vector + magnitude (or null if the swing was too weak).
   endCalibration() {
     const d = this.calibDirection;
     this.calibDirection = null;
     if (!d) return null;
-    if (this.samples.length === 0) return null;
-
-    // Peak is the sample with max magnitude.
-    let peak = this.samples[0];
-    for (const s of this.samples) if (s.mag > peak.mag) peak = s;
-    if (peak.mag < CALIB_MIN_PEAK) return null;
-
-    const v = { x: peak.ax, y: peak.ay, z: peak.az };
-    this.templates[d] = { v, mag: peak.mag };
-    this.samples = [];
-    return { direction: d, v, mag: Number(peak.mag.toFixed(2)) };
+    // Find peak sample by magnitude.
+    if (this.calibSamples.length === 0) { this.calibSamples = []; return null; }
+    let peak = this.calibSamples[0];
+    for (const s of this.calibSamples) if (s.mag > peak.mag) peak = s;
+    const captured = peak.mag;
+    this.calibSamples = [];
+    if (captured < CALIB_MIN_PEAK) return null;
+    const template = { feat: peak.feat.slice(), mag: captured };
+    this.templates[d] = template;
+    return {
+      direction: d,
+      mag: Number(captured.toFixed(3)),
+      accel: { x: peak.a.x, y: peak.a.y, z: peak.a.z },
+      gyro:  { x: peak.w.x, y: peak.w.y, z: peak.w.z },
+    };
   }
 
+  // Main entry — accepts a motion sample message from the controller.
+  // msg.acceleration: {x,y,z} (gravity-removed if the phone provides it)
+  // msg.accelerationIncludingGravity: fallback
+  // msg.rotationRate: {alpha, beta, gamma}   (deg/s, phone frame)
   ingest(msg) {
-    const now = msg.t || Date.now();
-    const ag = msg.accelerationIncludingGravity || { x: 0, y: 0, z: 0 };
-    const a = msg.acceleration || null;
+    const now = msg.t ?? Date.now();
+    const ag  = msg.acceleration || msg.accelerationIncludingGravity || {};
+    const rr  = msg.rotationRate || {};
 
-    let ax, ay, az;
-    if (a && (a.x != null) && (a.y != null) && (a.z != null)) {
-      ax = a.x; ay = a.y; az = a.z;
-    } else {
-      const alpha = 0.9;
-      this.gravity.x = alpha * this.gravity.x + (1 - alpha) * ag.x;
-      this.gravity.y = alpha * this.gravity.y + (1 - alpha) * ag.y;
-      this.gravity.z = alpha * this.gravity.z + (1 - alpha) * ag.z;
-      ax = ag.x - this.gravity.x;
-      ay = ag.y - this.gravity.y;
-      az = ag.z - this.gravity.z;
+    const ax = Number(ag.x) || 0;
+    const ay = Number(ag.y) || 0;
+    const az = Number(ag.z) || 0;
+    // rotationRate: alpha = around x, beta = around y, gamma = around z
+    // (see MDN "Orientation and motion data explained").
+    const wx = (Number(rr.alpha) || 0) * DEG2RAD;
+    const wy = (Number(rr.beta)  || 0) * DEG2RAD;
+    const wz = (Number(rr.gamma) || 0) * DEG2RAD;
+
+    const feat = toFeature(ax, ay, az, wx, wy, wz);
+    const mag = norm6(feat);
+
+    const sample = {
+      t: now,
+      a: { x: ax, y: ay, z: az },
+      w: { x: wx, y: wy, z: wz },
+      feat, mag,
+    };
+
+    // While calibrating: just collect samples, don't emit.
+    if (this.calibDirection) {
+      this.calibSamples.push(sample);
+      if (this.calibSamples.length > 200) this.calibSamples.shift();
+      return null;
     }
 
-    const mag = Math.hypot(ax, ay, az);
-    this.samples.push({ t: now, ax, ay, az, mag });
+    // Rolling window.
+    this.samples.push(sample);
+    while (this.samples.length && now - this.samples[0].t > WINDOW_MS) {
+      this.samples.shift();
+    }
 
-    const cutoff = now - WINDOW_MS;
-    while (this.samples.length && this.samples[0].t < cutoff) this.samples.shift();
-
-    // During calibration we just accumulate samples; endCalibration() extracts
-    // the peak. Don't fire attack events.
-    if (this.calibDirection) return null;
-
+    const threshold = BASE_PEAK * this.sensitivity;
     if (now - this.lastFireAt < REFRACTORY_MS) return null;
 
-    if (!this.inSwing) {
-      if (mag > Math.min(SWING_PEAK_G, THRUST_PEAK_G)) this.inSwing = true;
-      return null;
+    if (!this.inBurst && mag > threshold) {
+      this.inBurst = true;
+    } else if (this.inBurst && mag < threshold * 0.5) {
+      // Burst ended: find peak in window and classify.
+      this.inBurst = false;
+      let peak = this.samples[0];
+      for (const s of this.samples) if (s.mag > peak.mag) peak = s;
+      if (peak.mag < threshold) return null;
+
+      this.lastFireAt = now;
+      const result = this._classify(peak);
+      this.lastDebug = {
+        peakMag: Number(peak.mag.toFixed(3)),
+        peakFeat: peak.feat.map((v) => Number(v.toFixed(3))),
+        ...result,
+      };
+      return {
+        direction: result.direction,
+        peakMag: Number(peak.mag.toFixed(3)),
+        score: Number(result.score.toFixed(3)),
+        mode: result.mode,
+      };
     }
-
-    // Wait for falling edge.
-    const n = this.samples.length;
-    if (n < 3) return null;
-    const last3 = this.samples.slice(-3);
-    const falling = last3[2].mag < last3[1].mag && last3[1].mag < last3[0].mag * 1.02;
-    if (!falling && mag > SWING_PEAK_G * 0.4) return null;
-
-    // Find peak vector + magnitude.
-    let peak = this.samples[0];
-    for (const s of this.samples) if (s.mag > peak.mag) peak = s;
-    if (peak.mag < THRUST_PEAK_G) {
-      this.inSwing = false;
-      return null;
-    }
-
-    const direction = this._classify(peak);
-    if (!direction) { this.inSwing = false; return null; }
-
-    this.lastFireAt = now;
-    this.inSwing = false;
-    return { direction, peakMag: Number(peak.mag.toFixed(2)), t: now };
+    return null;
   }
 
   _classify(peak) {
-    const calibrated = Object.keys(this.templates);
-    if (calibrated.length >= 3) {
-      // Template-based: pick the direction whose recorded peak vector is most
-      // similar (cosine) to this swing. Requires at least 3 templates to be
-      // reasonably disambiguating.
+    const templateKeys = Object.keys(this.templates);
+    if (templateKeys.length >= 3) {
+      // Template-based.
       let best = null, bestScore = -Infinity;
-      const pv = { x: peak.ax, y: peak.ay, z: peak.az };
-      for (const d of calibrated) {
-        const score = cosSim(pv, this.templates[d].v);
-        if (score > bestScore) { bestScore = score; best = d; }
+      const scores = {};
+      for (const d of templateKeys) {
+        const s = cosSim6(peak.feat, this.templates[d].feat);
+        scores[d] = Number(s.toFixed(3));
+        if (s > bestScore) { bestScore = s; best = d; }
       }
-      if (bestScore < TEMPLATE_MIN_COSINE) return null;
-      return best;
+      if (best && bestScore >= TEMPLATE_MIN_COSINE) {
+        return { direction: best, score: bestScore, mode: "template", scores };
+      }
+      // Fall through to axis-based if no template is confident enough.
     }
 
-    // Fallback: axis-based classifier in the phone's native frame.
-    // Use the signed peak of each axis over the window.
-    let sx = 0, sy = 0, sz = 0;
-    for (const s of this.samples) {
-      if (Math.abs(s.ax) > Math.abs(sx)) sx = s.ax;
-      if (Math.abs(s.ay) > Math.abs(sy)) sy = s.ay;
-      if (Math.abs(s.az) > Math.abs(sz)) sz = s.az;
+    // Axis-based fallback. Look at which signed dimension dominates.
+    // Index mapping: 0=ax, 1=ay, 2=az, 3=ωx, 4=ωy, 5=ωz.
+    // For a right-swing (phone swung left→right in portrait): +ax OR +ωy.
+    // For up-swing: +ay.  For thrust: -az dominant.
+    // We pick the axis (of the 6) with greatest |value|.
+    let bestIdx = 0, bestAbs = 0;
+    for (let i = 0; i < 6; i++) {
+      const v = Math.abs(peak.feat[i]);
+      if (v > bestAbs) { bestAbs = v; bestIdx = i; }
     }
-    const absX = Math.abs(sx), absY = Math.abs(sy), absZ = Math.abs(sz);
-    if (absZ > absX && absZ > absY && peak.mag < SWING_PEAK_G * 1.4) return "thrust";
-    if (absX > absY) return sx > 0 ? "right" : "left";
-    return sy > 0 ? "up" : "down";
+    const sign = Math.sign(peak.feat[bestIdx]);
+    let direction;
+    switch (bestIdx) {
+      case 0: direction = sign > 0 ? "right" : "left";   break;
+      case 1: direction = sign > 0 ? "up"    : "down";   break;
+      case 2: direction = sign < 0 ? "thrust" : "thrust"; break;
+      // Angular axes use right-hand rule about the corresponding phone axis;
+      // map them to the same intuitive directions.
+      case 3: direction = sign > 0 ? "up"    : "down";   break; // ωx
+      case 4: direction = sign > 0 ? "right" : "left";   break; // ωy
+      case 5: direction = sign > 0 ? "right" : "left";   break; // ωz
+      default: direction = "thrust";
+    }
+    return { direction, score: bestAbs, mode: "axis", scores: null };
   }
 }

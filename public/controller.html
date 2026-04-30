@@ -22,19 +22,31 @@
     </div>
 
     <div id="play-ui" hidden>
-      <div class="stat-grid">
-        <div><span>|a|</span><b id="mag">0</b></div>
-        <div><span>last</span><b id="ctrl-last">—</b></div>
+      <!-- Live signal bars: acceleration and gyroscope magnitudes -->
+      <div class="debug-panel">
+        <div class="bar-row"><span>|a|</span><div class="bar-track"><div id="bar-a" class="bar-fill acc"></div></div><b id="mag">0</b></div>
+        <div class="bar-row"><span>|ω|</span><div class="bar-track"><div id="bar-w" class="bar-fill gyro"></div></div><b id="omega">0</b></div>
+        <div class="stat-row">
+          <span>last: <b id="ctrl-last">—</b></span>
+          <span>mode: <b id="ctrl-mode">—</b></span>
+          <span>score: <b id="ctrl-score">—</b></span>
+        </div>
+        <div class="scores-row" id="scores-row" hidden></div>
       </div>
 
-      <div id="calib-banner" class="calib-banner" hidden></div>
+      <div class="slider-row">
+        <label>Sensitivity <b id="sens-val">1.0</b></label>
+        <input type="range" id="sens-slider" min="0.3" max="2.0" step="0.05" value="1.0" />
+      </div>
 
       <div id="touch-pad">
         <button class="big" data-btn="block">HOLD TO BLOCK</button>
-        <button class="big" id="open-calib">Calibrate swings</button>
+        <button class="big primary" id="open-calib">Calibrate swings</button>
+        <button class="big ghost" id="reset-calib">Reset calibration</button>
       </div>
-      <p class="hint">Swing the phone: up / down / left / right, or push forward for a thrust.</p>
-      <p class="hint" id="calib-status">Using default axis-based detection. Calibrate for better recognition of your swings.</p>
+
+      <p class="hint" id="calib-status">Using default detection. Calibrate for per-user swings.</p>
+      <p class="hint">Hold the phone however feels natural as a sword grip. Swing. The bars above should spike.</p>
     </div>
 
     <!-- Calibration wizard overlay -->
@@ -45,6 +57,12 @@
 
         <div id="calib-ready" class="calib-visual">
           <div class="calib-arrow" id="calib-arrow">→</div>
+        </div>
+
+        <!-- Live magnitude bars during recording, so user sees their swing -->
+        <div class="calib-bars" id="calib-bars" hidden>
+          <div class="bar-row small"><span>|a|</span><div class="bar-track"><div id="calib-bar-a" class="bar-fill acc"></div></div></div>
+          <div class="bar-row small"><span>|ω|</span><div class="bar-track"><div id="calib-bar-w" class="bar-fill gyro"></div></div></div>
         </div>
 
         <div class="calib-progress">
