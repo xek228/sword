@@ -69,10 +69,21 @@ function check(name, got, want) {
 }
 
 // --- Forward jab (linear accel, little rotation) → overhead chop ----------
+// Pose-agnostic: we don't care which phone axis carries the accel.
 {
   const d = new GestureDetector();
-  check("forward jab fires chop (down)",
+  check("forward jab along -Z fires chop (down)",
     feed(d, burst({ accel: { z: -35 } }))?.direction, "down");
+}
+{
+  const d = new GestureDetector();
+  check("forward jab along +Y fires chop (down)",
+    feed(d, burst({ accel: { y: +35 } }))?.direction, "down");
+}
+{
+  const d = new GestureDetector();
+  check("forward jab along -X fires chop (down)",
+    feed(d, burst({ accel: { x: -35 } }))?.direction, "down");
 }
 
 // --- Below threshold stays silent ------------------------------------------

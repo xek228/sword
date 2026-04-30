@@ -147,18 +147,19 @@ export class GestureDetector {
 
   _classify(peak) {
     if (!peak) return null;
-    const { alpha, beta, gamma, az, magRot, magAcc } = peak;
+    const { alpha, beta, gamma, magRot, magAcc } = peak;
     const rotThresh = ROT_THRESHOLD_DPS * this.sensitivity;
     const accThresh = ACC_THRESHOLD_MPS2 * this.sensitivity;
 
-    // Forward jab of the whole phone = overhead chop. Previously this
-    // fired as "thrust"; the user's actual physical intent is "I cut
-    // from above", and the rotation-based "down" below is a harder
-    // motion to do cleanly. So pure linear-forward now also triggers
-    // down. Thrust is bound to Spacebar in the game.
-    if (magRot < rotThresh * 0.7 && magAcc > accThresh && az < -accThresh * 0.5) {
+    // Any sharp linear translation of the phone with little rotation
+    // = overhead chop. We deliberately do NOT constrain which phone
+    // axis the acceleration is on: the player may hold the phone
+    // vertically (screen toward them, jab along -Z) or sideways like
+    // a blade (top edge forward, jab along +Y) — both should produce
+    // a chop. Thrust is bound to Spacebar in the game.
+    if (magRot < rotThresh * 0.7 && magAcc > accThresh) {
       const down = !this.invertV;
-      return { direction: down ? "down" : "up", peakMag: magAcc, axis: "accZ" };
+      return { direction: down ? "down" : "up", peakMag: magAcc, axis: "accel" };
     }
 
     // Rotation: pick dominant of the three gyro axes.
