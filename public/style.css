@@ -86,6 +86,19 @@ body.controller {
 }
 .hint { color: var(--dim); font-size: 13px; }
 
+.error-box {
+  background: #331414; border: 1px solid #5a2626; color: #f2c1b6;
+  padding: 14px 16px; border-radius: 12px; font-size: 14px; line-height: 1.5;
+}
+.error-box h3 { margin: 0 0 8px; color: #ff9c85; font-size: 16px; }
+.error-box code, .error-box pre {
+  background: rgba(0,0,0,0.35); border-radius: 6px; padding: 1px 6px;
+  color: #ffd4a1; font-size: 12px; word-break: break-all; white-space: pre-wrap;
+}
+.error-box pre { padding: 8px 10px; margin: 6px 0; }
+.error-box ol { padding-left: 22px; margin: 6px 0; }
+.error-box li { margin: 6px 0; }
+
 #play-ui { display: flex; flex-direction: column; gap: 16px; flex: 1; }
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .stat-grid > div {
