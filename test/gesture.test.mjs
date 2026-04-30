@@ -68,10 +68,11 @@ function check(name, got, want) {
   check("up swing    (alpha -)", feed(d, burst({ gyro: { alpha: -400 } }))?.direction, "up");
 }
 
-// --- Thrust: linear accel, little rotation ---------------------------------
+// --- Forward jab (linear accel, little rotation) → overhead chop ----------
 {
   const d = new GestureDetector();
-  check("thrust (accel -z, no rot)", feed(d, burst({ accel: { z: -35 } }))?.direction, "thrust");
+  check("forward jab fires chop (down)",
+    feed(d, burst({ accel: { z: -35 } }))?.direction, "down");
 }
 
 // --- Below threshold stays silent ------------------------------------------

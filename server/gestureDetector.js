@@ -151,31 +151,35 @@ export class GestureDetector {
     const rotThresh = ROT_THRESHOLD_DPS * this.sensitivity;
     const accThresh = ACC_THRESHOLD_MPS2 * this.sensitivity;
 
-    // Thrust: mostly pure linear acceleration, little rotation. Z is
-    // out-of-screen; forward thrust is typically -Z on iOS (top edge
-    // moves forward, which pushes Z backward relative to the phone).
+    // Forward jab of the whole phone = overhead chop. Previously this
+    // fired as "thrust"; the user's actual physical intent is "I cut
+    // from above", and the rotation-based "down" below is a harder
+    // motion to do cleanly. So pure linear-forward now also triggers
+    // down. Thrust is bound to Spacebar in the game.
     if (magRot < rotThresh * 0.7 && magAcc > accThresh && az < -accThresh * 0.5) {
-      return { direction: "thrust", peakMag: magAcc, axis: "accZ" };
+      const down = !this.invertV;
+      return { direction: down ? "down" : "up", peakMag: magAcc, axis: "accZ" };
     }
 
     // Rotation: pick dominant of the three gyro axes.
     const absA = Math.abs(alpha), absB = Math.abs(beta), absG = Math.abs(gamma);
-    if (magRot < rotThresh) return null; // below threshold, ignore
+    if (magRot < rotThresh) return null;
 
     if (absB >= absA && absB >= absG) {
-      // Horizontal slash: rotation around phone's long (vertical) axis.
       const positive = beta > 0;
       const swing = positive !== this.invertH ? "right" : "left";
       return { direction: swing, peakMag: absB, axis: "beta" };
     }
     if (absA >= absB && absA >= absG) {
-      // Vertical slash: tipping the top forward/back.
       const positive = alpha > 0;
       const swing = positive !== this.invertV ? "down" : "up";
       return { direction: swing, peakMag: absA, axis: "alpha" };
     }
-    // Rotation around the through-screen axis — twist. We treat as thrust
-    // (it's a wrist-snap that doesn't fit the 4-direction model cleanly).
-    return { direction: "thrust", peakMag: absG, axis: "gamma" };
+    // Pure roll around the through-screen axis doesn't map to a named
+    // direction; fall back to the horizontal slash sign, since a wrist
+    // roll is closest to a quick side swipe.
+    const positive = gamma > 0;
+    const swing = positive !== this.invertH ? "right" : "left";
+    return { direction: swing, peakMag: absG, axis: "gamma" };
   }
 }
