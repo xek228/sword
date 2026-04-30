@@ -107,8 +107,8 @@ body.controller {
   display: flex; flex-direction: column; gap: 8px;
 }
 .bar-row {
-  display: grid; grid-template-columns: 28px 1fr 44px;
-  align-items: center; gap: 8px; font-size: 13px;
+  display: grid; grid-template-columns: 96px 1fr 70px;
+  align-items: center; gap: 8px; font-size: 12px;
 }
 .bar-row.small { grid-template-columns: 28px 1fr; }
 .bar-row span { color: var(--dim); }
@@ -143,11 +143,42 @@ body.controller {
 .slider-row label b { color: var(--fg); font-variant-numeric: tabular-nums; }
 .slider-row input[type="range"] { width: 100%; }
 
-.calib-bars {
-  display: flex; flex-direction: column; gap: 6px;
-  background: #0b0f18; border: 1px solid #1c2231;
-  padding: 8px 10px; border-radius: 8px;
+.pose-card {
+  background: #121723; border: 1px solid var(--accent); border-radius: 12px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
 }
+.pose-diagram {
+  font-size: 48px; text-align: center; line-height: 1;
+  background: #0b0f18; border-radius: 10px; padding: 14px 0;
+  border: 1px solid #1c2231;
+}
+.pose-text { margin: 0; line-height: 1.4; font-size: 13px; }
+.pose-moves {
+  margin: 4px 0 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 4px; font-size: 12px;
+}
+.pose-moves li { color: var(--dim); }
+.pose-moves b { color: var(--fg); display: inline-block; min-width: 28px; }
+
+.last-swing {
+  text-align: center; font-size: 13px; color: var(--dim);
+  padding: 6px 8px; border-radius: 8px; background: #0b0f18;
+  border: 1px solid #1c2231; transition: background 300ms ease;
+}
+.last-swing.flash { background: #1c3322; }
+.last-swing b.hit-right  { color: #5ab4ff; }
+.last-swing b.hit-left   { color: #5ab4ff; }
+.last-swing b.hit-up     { color: #ffd988; }
+.last-swing b.hit-down   { color: #ffd988; }
+.last-swing b.hit-thrust { color: var(--accent); }
+
+.toggle-row {
+  background: #121723; border: 1px solid #1c2231; border-radius: 10px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;
+  font-size: 13px;
+}
+.toggle-row label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.hint.small { font-size: 11px; opacity: 0.8; }
 #touch-pad { display: flex; flex-direction: column; gap: 12px; }
 .big {
   padding: 22px; font-size: 18px; border-radius: 14px;

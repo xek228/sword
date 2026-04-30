@@ -140,36 +140,16 @@ function attachWs(wss) {
         const event = room.detector.ingest(msg);
         if (event) {
           broadcast(room.games, { type: "attack", ...event });
-          // Also echo debug info (incl. template scores) back to the
-          // controller so the phone's debug panel can show "why" live.
-          const dbg = room.detector.lastDebug || {};
-          ws.send(JSON.stringify({ type: "attack-debug", ...event, scores: dbg.scores || null }));
+          // Echo back to the controller so the phone's "last swing"
+          // overlay flashes what was detected.
+          ws.send(JSON.stringify({ type: "attack-debug", ...event }));
         }
-      } else if (msg.type === "sensitivity") {
-        room.detector.setSensitivity(Number(msg.value));
+      } else if (msg.type === "config") {
+        room.detector.setConfig(msg.value || {});
       } else if (msg.type === "button") {
-        // Pass-through for discrete buttons (block, attack trigger, etc.)
         broadcast(room.games, { type: "button", ...msg });
       } else if (msg.type === "orientation") {
-        // Continuous orientation for aiming / on-screen sword preview.
         broadcast(room.games, { type: "orientation", ...msg });
-      } else if (msg.type === "calibrate") {
-        room.detector.calibrate();
-        broadcast(room.games, { type: "calibrated" });
-      } else if (msg.type === "calibrate:start") {
-        const ok = room.detector.startCalibration(msg.direction);
-        ws.send(JSON.stringify({ type: "calibrate:started", direction: msg.direction, ok }));
-      } else if (msg.type === "calibrate:end") {
-        const captured = room.detector.endCalibration();
-        ws.send(JSON.stringify({ type: "calibrate:recorded", captured }));
-        if (captured) broadcast(room.games, { type: "calibrate:recorded", captured });
-      } else if (msg.type === "calibrate:templates") {
-        // Client pushed a previously-stored template set (from localStorage).
-        room.detector.setTemplates(msg.templates || {});
-        ws.send(JSON.stringify({ type: "calibrate:templates-ack", templates: room.detector.getTemplates() }));
-      } else if (msg.type === "calibrate:reset") {
-        room.detector.clearTemplates();
-        ws.send(JSON.stringify({ type: "calibrate:templates-ack", templates: {} }));
       }
     });
 

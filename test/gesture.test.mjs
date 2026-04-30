@@ -1,32 +1,31 @@
-// Sanity tests for GestureDetector. Feeds synthetic motion samples with
-// accelerometer + gyroscope readings (the real iPhone provides both).
+// Sanity tests for the simple axis-based GestureDetector.
 // Run: `node test/gesture.test.mjs`
 import { GestureDetector } from "../server/gestureDetector.js";
 
-// Build a synthetic swing: half-sine pulse over 150 ms on the chosen
-// accel+gyro axes. `accel` is in m/s^2, `gyro` in deg/s (to match iOS units).
-function swing(opts, t0 = 1000) {
-  const { accel = {}, gyro = {} } = opts;
+// Simulate a motion burst: ramp up the rotation rate on the chosen
+// axis, hold, ramp down, then stay still. Accel defaults to zero.
+// gyro/accel values are raw units the iPhone sends.
+function burst(opts, t0 = 1000) {
+  const { gyro = {}, accel = {} } = opts;
   const out = [];
   for (let i = 0; i <= 15; i++) {
-    const t = t0 + i * 10;
     const k = Math.sin((i / 15) * Math.PI);
     out.push({
-      t,
+      t: t0 + i * 10,
       acceleration: {
         x: (accel.x || 0) * k,
         y: (accel.y || 0) * k,
         z: (accel.z || 0) * k,
       },
       rotationRate: {
-        alpha: (gyro.x || 0) * k,
-        beta:  (gyro.y || 0) * k,
-        gamma: (gyro.z || 0) * k,
+        alpha: (gyro.alpha || 0) * k,
+        beta:  (gyro.beta  || 0) * k,
+        gamma: (gyro.gamma || 0) * k,
       },
     });
   }
-  // Trailing stillness so the burst ends and classification fires.
-  for (let i = 1; i <= 8; i++) {
+  // Trailing stillness so the detector's quiet timer fires classification.
+  for (let i = 1; i <= 20; i++) {
     out.push({
       t: t0 + 150 + i * 10,
       acceleration: { x: 0, y: 0, z: 0 },
@@ -46,98 +45,90 @@ function feed(det, samples) {
 }
 
 let pass = 0, fail = 0;
-function expect(name, got, want) {
+function check(name, got, want) {
   if (got === want) { pass++; console.log(`ok  ${name}: ${got}`); }
   else { fail++; console.error(`FAIL ${name}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`); }
 }
 
-// --- Axis-based fallback (no calibration) ---------------------------------
-// Uncalibrated behaviour: a pure-accel right-swing still classifies as right.
+// --- Basic directions ------------------------------------------------------
 {
   const d = new GestureDetector();
-  const evt = feed(d, swing({ accel: { x: 30 } }));
-  expect("uncalibrated right (accel-only)", evt?.direction, "right");
+  check("right swing (beta +)", feed(d, burst({ gyro: { beta: +400 } }))?.direction, "right");
 }
 {
   const d = new GestureDetector();
-  const evt = feed(d, swing({ accel: { y: -30 } }));
-  expect("uncalibrated down (accel-only)", evt?.direction, "down");
+  check("left swing  (beta -)", feed(d, burst({ gyro: { beta: -400 } }))?.direction, "left");
 }
-// A pure-gyro swing (typical for a grip-held phone) also registers.
 {
   const d = new GestureDetector();
-  const evt = feed(d, swing({ gyro: { y: 400 } })); // 400 deg/s ≈ 7 rad/s
-  expect("uncalibrated gyro-only swing fires", !!evt, true);
+  check("down chop   (alpha +)", feed(d, burst({ gyro: { alpha: +400 } }))?.direction, "down");
 }
-// Too weak: no event.
 {
   const d = new GestureDetector();
-  const evt = feed(d, swing({ accel: { x: 3 }, gyro: { y: 30 } }));
-  expect("below threshold stays silent", evt, null);
+  check("up swing    (alpha -)", feed(d, burst({ gyro: { alpha: -400 } }))?.direction, "up");
 }
-// Refractory: two back-to-back swings collapse to one event.
+
+// --- Thrust: linear accel, little rotation ---------------------------------
+{
+  const d = new GestureDetector();
+  check("thrust (accel -z, no rot)", feed(d, burst({ accel: { z: -35 } }))?.direction, "thrust");
+}
+
+// --- Below threshold stays silent ------------------------------------------
+{
+  const d = new GestureDetector();
+  check("weak swing ignored", feed(d, burst({ gyro: { beta: +100 } })), null);
+}
+
+// --- Sensitivity lowers threshold ------------------------------------------
+{
+  const d = new GestureDetector();
+  d.setSensitivity(0.4);
+  check("sensitive mode catches weak swing",
+    feed(d, burst({ gyro: { beta: +150 } }))?.direction, "right");
+}
+
+// --- Refractory period collapses rapid pair into one -----------------------
 {
   const d = new GestureDetector();
   let fired = 0;
-  for (const s of [...swing({ accel: { x: 30 } }, 1000),
-                   ...swing({ accel: { x: 30 } }, 1180)]) {
+  for (const s of [...burst({ gyro: { beta: +400 } }, 1000),
+                   ...burst({ gyro: { beta: +400 } }, 1050)]) {
     if (d.ingest(s)) fired++;
   }
-  expect("refractory collapses to 1", fired, 1);
-}
-// Sensitivity: lowering it lets weaker swings fire.
-{
-  const d = new GestureDetector();
-  d.setSensitivity(0.3);
-  const evt = feed(d, swing({ accel: { x: 8 }, gyro: { y: 60 } }));
-  expect("low sensitivity catches weak swing", evt?.direction, "right");
+  check("rapid double burst = 1 event", fired, 1);
 }
 
-// --- Template-based classification ---------------------------------------
+// --- Sign inversion for users holding phone reversed -----------------------
 {
   const d = new GestureDetector();
-  // Simulate a user holding the phone sideways: their "right swing" is
-  // dominated by +z acceleration and +x gyro (not the portrait defaults).
-  const register = (dir, opts, t0) => {
-    d.startCalibration(dir);
-    for (const s of swing(opts, t0)) d.ingest(s);
-    return d.endCalibration();
-  };
-  const r1 = register("right",  { accel: { z: +25 }, gyro: { x: +350 } },  500);
-  const r2 = register("left",   { accel: { z: -25 }, gyro: { x: -350 } }, 1500);
-  const r3 = register("up",     { accel: { y: +25 }, gyro: { z: +350 } }, 2500);
-  const r4 = register("down",   { accel: { y: -25 }, gyro: { z: -350 } }, 3500);
-  const r5 = register("thrust", { accel: { x: +25 }                    }, 4500);
-
-  expect("calibration captured right",  r1?.direction, "right");
-  expect("calibration captured thrust", r5?.direction, "thrust");
-
-  // Now fire a new swing that matches the user's "right" template.
-  const e1 = feed(d, swing({ accel: { z: +30 }, gyro: { x: +400 } }, 6000));
-  expect("template classifies right under sideways grip", e1?.direction, "right");
-  expect("classification mode is template", e1?.mode, "template");
-
-  // A gyro-dominant right-swing still classifies as right.
-  const e2 = feed(d, swing({ gyro: { x: +500 } }, 7000));
-  expect("template classifies right (gyro-dominant)", e2?.direction, "right");
+  d.setConfig({ invertH: true });
+  check("invertH flips right <-> left",
+    feed(d, burst({ gyro: { beta: +400 } }))?.direction, "left");
+}
+{
+  const d = new GestureDetector();
+  d.setConfig({ invertV: true });
+  check("invertV flips up <-> down",
+    feed(d, burst({ gyro: { alpha: +400 } }))?.direction, "up");
 }
 
-// --- setTemplates validates entries --------------------------------------
+// --- Dominant axis picking: off-axis noise shouldn't confuse ---------------
 {
   const d = new GestureDetector();
-  d.setTemplates({
-    right:  { feat: [1, 0, 0, 0, 1, 0], mag: 1.4 },
-    left:   { feat: [-1, 0, 0, 0, -1, 0], mag: 1.4 },
-    up:     { feat: [0, 1, 0, 1, 0, 0], mag: 1.4 },
-    garbage:{ feat: [NaN, 0, 0, 0, 0, 0], mag: 1.0 },
-    weak:   { feat: [0.1, 0, 0, 0, 0, 0], mag: 0.1 },
-    wrongShape: { feat: [1, 2, 3], mag: 1 },
-  });
-  const t = d.getTemplates();
-  expect("templates kept: right",          !!t.right,     true);
-  expect("templates dropped: garbage",     !!t.garbage,   false);
-  expect("templates dropped: weak",        !!t.weak,      false);
-  expect("templates dropped: wrongShape",  !!t.wrongShape,false);
+  // A right swing with noisy alpha component — beta still dominant.
+  check("noisy right swing still classifies as right",
+    feed(d, burst({ gyro: { beta: +450, alpha: +100 } }))?.direction, "right");
+}
+
+// --- Config persistence ----------------------------------------------------
+{
+  const d = new GestureDetector();
+  d.setConfig({ sensitivity: 0.5, invertH: true, invertV: false });
+  const cfg = d.getConfig();
+  check("config round-trips sensitivity", cfg.sensitivity, 0.5);
+  check("config round-trips invertH",     cfg.invertH,     true);
+  check("config round-trips invertV",     cfg.invertV,     false);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

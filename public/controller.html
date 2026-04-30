@@ -22,64 +22,44 @@
     </div>
 
     <div id="play-ui" hidden>
-      <!-- Live signal bars: acceleration and gyroscope magnitudes -->
-      <div class="debug-panel">
-        <div class="bar-row"><span>|a|</span><div class="bar-track"><div id="bar-a" class="bar-fill acc"></div></div><b id="mag">0</b></div>
-        <div class="bar-row"><span>|ω|</span><div class="bar-track"><div id="bar-w" class="bar-fill gyro"></div></div><b id="omega">0</b></div>
-        <div class="stat-row">
-          <span>last: <b id="ctrl-last">—</b></span>
-          <span>mode: <b id="ctrl-mode">—</b></span>
-          <span>score: <b id="ctrl-score">—</b></span>
+      <!-- Pose instruction card. This is THE key UX piece now. -->
+      <div class="pose-card">
+        <div class="pose-diagram">📱↑</div>
+        <div class="pose-text">
+          <b>Hold the phone vertically in your hand,</b> screen facing you,
+          top edge pointing up. The top edge is the sword tip.
         </div>
-        <div class="scores-row" id="scores-row" hidden></div>
+        <ul class="pose-moves">
+          <li><b>→</b> twist your wrist <b>right</b> → right slash</li>
+          <li><b>←</b> twist your wrist <b>left</b> → left slash</li>
+          <li><b>↓</b> chop top-edge <b>forward and down</b> → overhead chop</li>
+          <li><b>↑</b> flick top-edge <b>up</b> → upswing</li>
+          <li><b>•→</b> jab the phone <b>straight forward</b> → thrust</li>
+        </ul>
+      </div>
+
+      <!-- Live axis readings, clearly labelled. -->
+      <div class="debug-panel">
+        <div class="bar-row"><span>↔ twist (beta)</span><div class="bar-track"><div id="bar-beta"  class="bar-fill gyro"></div></div><b id="v-beta">0</b>°/s</div>
+        <div class="bar-row"><span>↕ tip (alpha)</span><div class="bar-track"><div id="bar-alpha" class="bar-fill gyro"></div></div><b id="v-alpha">0</b>°/s</div>
+        <div class="bar-row"><span>↺ roll (gamma)</span><div class="bar-track"><div id="bar-gamma" class="bar-fill gyro"></div></div><b id="v-gamma">0</b>°/s</div>
+        <div class="bar-row"><span>push (|a|)</span><div class="bar-track"><div id="bar-acc" class="bar-fill acc"></div></div><b id="v-acc">0</b> m/s²</div>
+        <div class="last-swing" id="last-swing">last swing: <b>—</b></div>
       </div>
 
       <div class="slider-row">
-        <label>Sensitivity <b id="sens-val">1.0</b></label>
+        <label>Sensitivity <b id="sens-val">1.0</b> <span class="hint small">(lower = easier)</span></label>
         <input type="range" id="sens-slider" min="0.3" max="2.0" step="0.05" value="1.0" />
+      </div>
+
+      <div class="toggle-row">
+        <label><input type="checkbox" id="invert-h" /> Flip right ⇄ left</label>
+        <label><input type="checkbox" id="invert-v" /> Flip up ⇄ down</label>
+        <p class="hint small">Check these if your swings trigger the opposite direction.</p>
       </div>
 
       <div id="touch-pad">
         <button class="big" data-btn="block">HOLD TO BLOCK</button>
-        <button class="big primary" id="open-calib">Calibrate swings</button>
-        <button class="big ghost" id="reset-calib">Reset calibration</button>
-      </div>
-
-      <p class="hint" id="calib-status">Using default detection. Calibrate for per-user swings.</p>
-      <p class="hint">Hold the phone however feels natural as a sword grip. Swing. The bars above should spike.</p>
-    </div>
-
-    <!-- Calibration wizard overlay -->
-    <div id="calib-overlay" class="calib-overlay" hidden>
-      <div class="calib-card">
-        <h2 id="calib-title">Calibration</h2>
-        <p id="calib-instruction" class="calib-instruction"></p>
-
-        <div id="calib-ready" class="calib-visual">
-          <div class="calib-arrow" id="calib-arrow">→</div>
-        </div>
-
-        <!-- Live magnitude bars during recording, so user sees their swing -->
-        <div class="calib-bars" id="calib-bars" hidden>
-          <div class="bar-row small"><span>|a|</span><div class="bar-track"><div id="calib-bar-a" class="bar-fill acc"></div></div></div>
-          <div class="bar-row small"><span>|ω|</span><div class="bar-track"><div id="calib-bar-w" class="bar-fill gyro"></div></div></div>
-        </div>
-
-        <div class="calib-progress">
-          <span data-step="right">right</span>
-          <span data-step="left">left</span>
-          <span data-step="up">up</span>
-          <span data-step="down">down</span>
-          <span data-step="thrust">thrust</span>
-        </div>
-
-        <div class="calib-countdown" id="calib-countdown"></div>
-        <p id="calib-feedback" class="hint"></p>
-
-        <div class="calib-actions">
-          <button class="big ghost" id="calib-cancel">Cancel</button>
-          <button class="big primary" id="calib-next">Start</button>
-        </div>
       </div>
     </div>
   </div>
