@@ -30,20 +30,22 @@
           top edge pointing up. The top edge is the sword tip.
         </div>
         <ul class="pose-moves">
-          <li><b>→</b> twist your wrist <b>right</b> → right slash</li>
-          <li><b>←</b> twist your wrist <b>left</b> → left slash</li>
-          <li><b>↓</b> chop top-edge <b>forward and down</b> → overhead chop</li>
-          <li><b>↑</b> flick top-edge <b>up</b> → upswing</li>
-          <li><b>•→</b> jab the phone <b>straight forward</b> → thrust</li>
+          <li><b>→</b> swing the phone <b>left → right</b> across your body → right slash</li>
+          <li><b>←</b> swing the phone <b>right → left</b> across your body → left slash</li>
+          <li><b>↓</b> chop the phone <b>down &amp; forward</b> (like cutting wood) → overhead chop</li>
+          <li><b>␣</b> hit <b>Spacebar</b> on the keyboard → thrust</li>
         </ul>
       </div>
 
-      <!-- Live axis readings, clearly labelled. -->
+      <!-- Live motion readings. The two fused scores are what the
+           detector actually classifies on; raw axes are for debugging. -->
       <div class="debug-panel">
-        <div class="bar-row"><span>↔ twist (beta)</span><div class="bar-track"><div id="bar-beta"  class="bar-fill gyro"></div></div><b id="v-beta">0</b>°/s</div>
-        <div class="bar-row"><span>↕ tip (alpha)</span><div class="bar-track"><div id="bar-alpha" class="bar-fill gyro"></div></div><b id="v-alpha">0</b>°/s</div>
-        <div class="bar-row"><span>↺ roll (gamma)</span><div class="bar-track"><div id="bar-gamma" class="bar-fill gyro"></div></div><b id="v-gamma">0</b>°/s</div>
-        <div class="bar-row"><span>push (|a|)</span><div class="bar-track"><div id="bar-acc" class="bar-fill acc"></div></div><b id="v-acc">0</b> m/s²</div>
+        <div class="bar-row"><span>↔ lateral (L/R)</span><div class="bar-track"><div id="bar-lateral"  class="bar-fill accent"></div></div><b id="v-lateral">0</b></div>
+        <div class="bar-row"><span>↓ vertical (chop)</span><div class="bar-track"><div id="bar-vertical" class="bar-fill accent"></div></div><b id="v-vertical">0</b></div>
+        <div class="bar-divider">raw axes</div>
+        <div class="bar-row"><span>twist (β)</span><div class="bar-track"><div id="bar-beta"  class="bar-fill gyro"></div></div><b id="v-beta">0</b>°/s</div>
+        <div class="bar-row"><span>tip (α)</span><div class="bar-track"><div id="bar-alpha" class="bar-fill gyro"></div></div><b id="v-alpha">0</b>°/s</div>
+        <div class="bar-row"><span>accel (|a|)</span><div class="bar-track"><div id="bar-acc" class="bar-fill acc"></div></div><b id="v-acc">0</b> m/s²</div>
         <div class="last-swing" id="last-swing">last swing: <b>—</b></div>
       </div>
 

@@ -1,35 +1,39 @@
-// Dead-simple motion detector for a FIXED phone pose.
+// Dead-simple motion detector for a FIXED phone pose, reworked around
+// real sword-swing motions (not wrist-only twists).
 //
-// This is intentionally stupid. After the complex 6D-template classifier
-// randomly confused the user's swings, we pivoted to: "pick one pose, one
-// axis per swing type, large thresholds, no calibration." Nothing fancy,
-// no shaped recognisers, no cosine similarity. If a single rotation axis
-// exceeds a threshold for ~50ms, we fire an event. End of algorithm.
+// We only recognise three gestures: LEFT slash, RIGHT slash, CHOP
+// (overhead down). Thrust is bound to the spacebar on the game side.
+// Up-swings are intentionally unsupported.
 //
-// Assumed pose (the controller UI will show this as a diagram):
+// Assumed pose (shown as a diagram on the controller):
 //   Phone held vertically (portrait), screen facing the player,
-//   top edge pointing up (= imaginary sword tip).
+//   top edge = imaginary sword tip.
 //
-// Axis mapping in that pose (iOS rotationRate is deg/s, phone frame):
-//   rotationRate.beta  (spin around phone long axis / world vertical):
-//     + = right swing, - = left swing
-//   rotationRate.alpha (tip top forward/back):
-//     + = down chop, - = up swing
-//   linear acceleration z (out the back of the screen):
-//     strongly negative AND no rotation = thrust
+// Each swing is scored by fusing rotation (deg/s) with a scaled linear
+// acceleration (m/s^2), so that either a wrist-only flick OR a full arm
+// swing trigger the same event:
 //
-// The four *sign* defaults can be flipped per-axis via config so that
-// players who hold the phone with screen facing away or upside-down
-// don't need a code change — they just tap a toggle in the UI.
+//   lateralScore  = beta   + ACCEL_TO_DPS * ax      // right/left
+//   verticalScore = alpha  + ACCEL_TO_DPS * (-ay - az)  // chop down/forward
+//
+// (In phone frame: ax = lateral, ay = along the phone's long axis,
+// az = out the back of the screen. A chop sends the phone forward and
+// down, so both -ay and -az are positive contributions to chop.)
+//
+// The two sign defaults (invertH, invertV) can be flipped via config in
+// case the player holds the phone screen-away / upside-down, without
+// touching any code.
 
 const REFRACTORY_MS = 300;
 const BURST_COOLDOWN_MS = 120; // min quiet time to end a swing burst
 
 // Default thresholds. `sensitivity` scales them: 1.0 = defaults,
 // 0.5 = twice as sensitive, 2.0 = needs a very hard swing.
-const ROT_THRESHOLD_DPS  = 250; // deg/s on the dominant axis
-const ACC_THRESHOLD_MPS2 = 22;  // m/s^2 forward for thrust
-const ROT_QUIET_DPS      = 120; // below this on all axes = "rest"
+const SWING_THRESHOLD = 250; // on the fused score (deg/s equivalent)
+const ACC_THRESHOLD_MPS2 = 12;  // any m/s^2 exceeding this also starts a burst
+const QUIET_THRESHOLD = 120; // below this on fused score = "rest"
+// 1 m/s^2 of linear accel contributes as much as this many deg/s of rotation.
+const ACCEL_TO_DPS = 22;
 
 export class GestureDetector {
   constructor() {
@@ -91,40 +95,38 @@ export class GestureDetector {
     const ay = Number(a.y) || 0;
     const az = Number(a.z) || 0;
 
-    const magRot = Math.max(Math.abs(alpha), Math.abs(beta), Math.abs(gamma));
+    // Fused swing scores (deg/s equivalent). Either wrist rotation OR
+    // body translation contributes; largest absolute score wins.
+    const lateral  = beta  + ACCEL_TO_DPS * ax;               // right/left
+    const vertical = alpha + ACCEL_TO_DPS * (-ay - az);        // chop down
+
+    const sample = { alpha, beta, gamma, ax, ay, az, lateral, vertical };
     const magAcc = Math.hypot(ax, ay, az);
+    const fused  = Math.max(Math.abs(lateral), Math.abs(vertical));
 
     if (now - this.lastFireAt < REFRACTORY_MS) return null;
 
-    const rotThresh = ROT_THRESHOLD_DPS * this.sensitivity;
-    const accThresh = ACC_THRESHOLD_MPS2 * this.sensitivity;
-    const quietThresh = ROT_QUIET_DPS * this.sensitivity;
+    const startThresh = SWING_THRESHOLD * this.sensitivity;
+    const accelStart  = ACC_THRESHOLD_MPS2 * this.sensitivity;
+    const quiet       = QUIET_THRESHOLD * this.sensitivity;
 
-    const isActive = magRot > rotThresh || magAcc > accThresh;
+    const isActive = fused > startThresh || magAcc > accelStart;
 
     if (!this.inBurst && isActive) {
-      // Start a new burst, begin tracking peak.
       this.inBurst = true;
       this.burstStart = now;
       this.burstQuietStart = 0;
-      this.burstPeak = { alpha, beta, gamma, ax, ay, az, magRot, magAcc };
+      this.burstPeak = { ...sample, fused, magAcc };
       return null;
     }
 
     if (this.inBurst) {
-      // Update peak — pick sample with the largest rotation magnitude,
-      // or if rotation stayed low the whole time, the largest accel.
       const p = this.burstPeak;
-      const betterRot = magRot > p.magRot;
-      const betterAcc = magRot < quietThresh && p.magRot < quietThresh && magAcc > p.magAcc;
-      if (betterRot || betterAcc) {
-        this.burstPeak = { alpha, beta, gamma, ax, ay, az, magRot, magAcc };
-      }
+      if (fused > p.fused) this.burstPeak = { ...sample, fused, magAcc };
 
-      if (magRot < quietThresh && magAcc < accThresh * 0.6) {
+      if (fused < quiet && magAcc < accelStart * 0.6) {
         if (this.burstQuietStart === 0) this.burstQuietStart = now;
         if (now - this.burstQuietStart >= BURST_COOLDOWN_MS) {
-          // Burst ended: classify peak.
           const result = this._classify(this.burstPeak);
           this.inBurst = false;
           this.burstPeak = null;
@@ -147,35 +149,22 @@ export class GestureDetector {
 
   _classify(peak) {
     if (!peak) return null;
-    const { alpha, beta, gamma, az, magRot, magAcc } = peak;
-    const rotThresh = ROT_THRESHOLD_DPS * this.sensitivity;
-    const accThresh = ACC_THRESHOLD_MPS2 * this.sensitivity;
+    const { lateral, vertical } = peak;
+    const absL = Math.abs(lateral), absV = Math.abs(vertical);
+    const threshold = SWING_THRESHOLD * this.sensitivity;
+    if (Math.max(absL, absV) < threshold) return null;
 
-    // Thrust: mostly pure linear acceleration, little rotation. Z is
-    // out-of-screen; forward thrust is typically -Z on iOS (top edge
-    // moves forward, which pushes Z backward relative to the phone).
-    if (magRot < rotThresh * 0.7 && magAcc > accThresh && az < -accThresh * 0.5) {
-      return { direction: "thrust", peakMag: magAcc, axis: "accZ" };
+    if (absV > absL) {
+      // Down chop: forward-tip + down/forward translation. Positive
+      // verticalScore = chop. Negative (up-swing) is intentionally
+      // ignored — the user said up-swing isn't needed.
+      const positive = vertical > 0;
+      const isChop = positive !== this.invertV;
+      if (!isChop) return null;
+      return { direction: "down", peakMag: absV, axis: "vertical" };
     }
-
-    // Rotation: pick dominant of the three gyro axes.
-    const absA = Math.abs(alpha), absB = Math.abs(beta), absG = Math.abs(gamma);
-    if (magRot < rotThresh) return null; // below threshold, ignore
-
-    if (absB >= absA && absB >= absG) {
-      // Horizontal slash: rotation around phone's long (vertical) axis.
-      const positive = beta > 0;
-      const swing = positive !== this.invertH ? "right" : "left";
-      return { direction: swing, peakMag: absB, axis: "beta" };
-    }
-    if (absA >= absB && absA >= absG) {
-      // Vertical slash: tipping the top forward/back.
-      const positive = alpha > 0;
-      const swing = positive !== this.invertV ? "down" : "up";
-      return { direction: swing, peakMag: absA, axis: "alpha" };
-    }
-    // Rotation around the through-screen axis — twist. We treat as thrust
-    // (it's a wrist-snap that doesn't fit the 4-direction model cleanly).
-    return { direction: "thrust", peakMag: absG, axis: "gamma" };
+    const positive = lateral > 0;
+    const dir = positive !== this.invertH ? "right" : "left";
+    return { direction: dir, peakMag: absL, axis: "lateral" };
   }
 }
