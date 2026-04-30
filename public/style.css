@@ -179,6 +179,26 @@ body.controller {
 }
 .toggle-row label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
 .hint.small { font-size: 11px; opacity: 0.8; }
+
+.record-card {
+  background: #121723; border: 1px solid #2a3345; border-radius: 10px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
+}
+.record-card h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.record-card input[type="text"] {
+  padding: 10px 12px; border-radius: 8px; border: 1px solid #2a3345;
+  background: #0b0f18; color: var(--fg); font-size: 14px;
+}
+.record-card code { background: #0b0f18; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.rec-btn { background: #2a7d3a; color: #fff; border-color: #2a7d3a; }
+.rec-btn.recording { background: #b33; border-color: #b33; animation: pulse 0.8s infinite alternate; }
+@keyframes pulse { from { opacity: 1; } to { opacity: 0.75; } }
+.rec-status {
+  font-size: 12px; color: var(--dim); padding: 6px 8px;
+  background: #0b0f18; border-radius: 6px; border: 1px solid #1c2231;
+  min-height: 18px; font-variant-numeric: tabular-nums;
+}
+.rec-status b { color: var(--accent); }
 #touch-pad { display: flex; flex-direction: column; gap: 12px; }
 .big {
   padding: 22px; font-size: 18px; border-radius: 14px;

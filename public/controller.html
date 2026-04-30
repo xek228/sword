@@ -58,6 +58,14 @@
         <p class="hint small">Check these if your swings trigger the opposite direction.</p>
       </div>
 
+      <div class="record-card">
+        <h3>Record a swing</h3>
+        <p class="hint small">Type a label, hit <b>Start</b>, perform the swing once, hit <b>Stop</b>. Recordings save on the Mac at <code>/recordings</code>.</p>
+        <input type="text" id="rec-label" placeholder="e.g. right_slash" value="swing" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+        <button class="big rec-btn" id="rec-btn">Start recording</button>
+        <div class="rec-status" id="rec-status">—</div>
+      </div>
+
       <div id="touch-pad">
         <button class="big" data-btn="block">HOLD TO BLOCK</button>
       </div>

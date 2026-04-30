@@ -76,6 +76,14 @@ function connectWs() {
         setConn(m.games > 0 ? "paired" : "connected", m.games > 0 ? "on" : "");
       } else if (m.type === "attack-debug") {
         flashLastSwing(m);
+      } else if (m.type === "record:started") {
+        recStatus.textContent = `Recording "${m.label}"…`;
+      } else if (m.type === "record:saved") {
+        if (m.ok) {
+          recStatus.innerHTML = `Saved <b>${m.filename}</b> · ${m.sampleCount} samples · ${(m.durationMs/1000).toFixed(2)}s`;
+        } else {
+          recStatus.textContent = `save failed: ${m.error || "?"}`;
+        }
       }
     } catch {}
   });
@@ -230,6 +238,66 @@ sensSlider.addEventListener("input", () => {
 });
 invertH.addEventListener("change", pushCfg);
 invertV.addEventListener("change", pushCfg);
+
+// --- Recording wizard ------------------------------------------------------
+
+const recLabel  = $("rec-label");
+const recBtn    = $("rec-btn");
+const recStatus = $("rec-status");
+
+let recState = "idle"; // idle | recording
+let recStartedAt = 0;
+let recTimer = null;
+
+let audioCtx = null;
+function beep(freq, durMs) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + durMs / 1000);
+    osc.start();
+    osc.stop(audioCtx.currentTime + durMs / 1000);
+  } catch {}
+}
+
+function setRecState(state) {
+  recState = state;
+  if (state === "recording") {
+    recBtn.textContent = "Stop recording";
+    recBtn.classList.add("recording");
+    recStartedAt = performance.now();
+    recTimer = setInterval(() => {
+      const s = ((performance.now() - recStartedAt) / 1000).toFixed(1);
+      recStatus.textContent = `Recording ${s}s…`;
+    }, 100);
+  } else {
+    recBtn.textContent = "Start recording";
+    recBtn.classList.remove("recording");
+    if (recTimer) { clearInterval(recTimer); recTimer = null; }
+  }
+}
+
+recBtn.addEventListener("click", () => {
+  if (recState === "idle") {
+    const label = (recLabel.value || "swing").trim();
+    send({ type: "record:start", label });
+    beep(880, 120);
+    setRecState("recording");
+  } else {
+    send({ type: "record:stop" });
+    beep(440, 180);
+    setRecState("idle");
+    recStatus.textContent = "saving…";
+  }
+});
+
+
 
 // --- Touch buttons --------------------------------------------------------
 
