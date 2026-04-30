@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Sword Controller</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="controller">
+  <div id="ctrl-root">
+    <header>
+      <h1>Sword</h1>
+      <div id="conn" class="pill">disconnected</div>
+    </header>
+
+    <div id="permission-gate">
+      <p>Tap to enable motion sensors. iOS requires a user gesture.</p>
+      <button id="start-btn">Enable motion &amp; connect</button>
+      <p class="hint">If the button does nothing, open this page over <b>HTTPS</b> — iOS requires a secure context for motion permissions.</p>
+    </div>
+
+    <div id="play-ui" hidden>
+      <div class="stat-grid">
+        <div><span>|a|</span><b id="mag">0</b></div>
+        <div><span>last</span><b id="ctrl-last">—</b></div>
+      </div>
+      <div id="touch-pad">
+        <button class="big" data-btn="block">HOLD TO BLOCK</button>
+        <button class="big" data-btn="calibrate">Calibrate</button>
+      </div>
+      <p class="hint">Swing the phone: up / down / left / right, or push forward for a thrust.</p>
+    </div>
+  </div>
+  <script type="module" src="/controller.js"></script>
+</body>
+</html>
