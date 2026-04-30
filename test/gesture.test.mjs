@@ -1,10 +1,10 @@
-// Sanity tests for the fused rotation+accel GestureDetector.
-// Only three directions: left, right, chop (down). Thrust and up are gone.
+// Sanity tests for the simple axis-based GestureDetector.
 // Run: `node test/gesture.test.mjs`
 import { GestureDetector } from "../server/gestureDetector.js";
 
-// Simulate a half-sine motion burst on the given axes over ~150 ms,
-// followed by stillness so the burst-end timer fires classification.
+// Simulate a motion burst: ramp up the rotation rate on the chosen
+// axis, hold, ramp down, then stay still. Accel defaults to zero.
+// gyro/accel values are raw units the iPhone sends.
 function burst(opts, t0 = 1000) {
   const { gyro = {}, accel = {} } = opts;
   const out = [];
@@ -24,6 +24,7 @@ function burst(opts, t0 = 1000) {
       },
     });
   }
+  // Trailing stillness so the detector's quiet timer fires classification.
   for (let i = 1; i <= 20; i++) {
     out.push({
       t: t0 + 150 + i * 10,
@@ -49,46 +50,45 @@ function check(name, got, want) {
   else { fail++; console.error(`FAIL ${name}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`); }
 }
 
-// --- Wrist-only variants (rotation-dominated) ------------------------------
-check("wrist right (beta+)", feed(new GestureDetector(),
-  burst({ gyro: { beta: +400 } }))?.direction, "right");
-check("wrist left  (beta-)", feed(new GestureDetector(),
-  burst({ gyro: { beta: -400 } }))?.direction, "left");
-check("wrist chop  (alpha+)", feed(new GestureDetector(),
-  burst({ gyro: { alpha: +400 } }))?.direction, "down");
+// --- Basic directions ------------------------------------------------------
+{
+  const d = new GestureDetector();
+  check("right swing (beta +)", feed(d, burst({ gyro: { beta: +400 } }))?.direction, "right");
+}
+{
+  const d = new GestureDetector();
+  check("left swing  (beta -)", feed(d, burst({ gyro: { beta: -400 } }))?.direction, "left");
+}
+{
+  const d = new GestureDetector();
+  check("down chop   (alpha +)", feed(d, burst({ gyro: { alpha: +400 } }))?.direction, "down");
+}
+{
+  const d = new GestureDetector();
+  check("up swing    (alpha -)", feed(d, burst({ gyro: { alpha: -400 } }))?.direction, "up");
+}
 
-// --- Full-arm variants (linear-accel-dominated) ----------------------------
-// A shoulder swing with locked wrist sends the phone sideways (ax big),
-// no rotation. Should still classify as a side slash.
-check("shoulder right (ax+)", feed(new GestureDetector(),
-  burst({ accel: { x: +20 } }))?.direction, "right");
-check("shoulder left  (ax-)", feed(new GestureDetector(),
-  burst({ accel: { x: -20 } }))?.direction, "left");
-// An overhead chop with locked wrist sends the phone forward-down.
-check("shoulder chop (ay-, az-)", feed(new GestureDetector(),
-  burst({ accel: { y: -15, z: -15 } }))?.direction, "down");
+// --- Thrust: linear accel, little rotation ---------------------------------
+{
+  const d = new GestureDetector();
+  check("thrust (accel -z, no rot)", feed(d, burst({ accel: { z: -35 } }))?.direction, "thrust");
+}
 
-// --- Mixed: rotation + translation in same direction should reinforce ----
-check("mixed right (wrist + arm)", feed(new GestureDetector(),
-  burst({ gyro: { beta: +200 }, accel: { x: +10 } }))?.direction, "right");
+// --- Below threshold stays silent ------------------------------------------
+{
+  const d = new GestureDetector();
+  check("weak swing ignored", feed(d, burst({ gyro: { beta: +100 } })), null);
+}
 
-// --- Upward motion is intentionally ignored --------------------------------
-check("up-swing no longer fires", feed(new GestureDetector(),
-  burst({ gyro: { alpha: -400 } })), null);
-
-// --- Sub-threshold is ignored ---------------------------------------------
-check("weak motion stays silent", feed(new GestureDetector(),
-  burst({ gyro: { beta: +80 } })), null);
-
-// --- Sensitivity turns a weak swing into a hit ----------------------------
+// --- Sensitivity lowers threshold ------------------------------------------
 {
   const d = new GestureDetector();
   d.setSensitivity(0.4);
-  check("sensitive catches weak right", feed(d,
-    burst({ gyro: { beta: +150 } }))?.direction, "right");
+  check("sensitive mode catches weak swing",
+    feed(d, burst({ gyro: { beta: +150 } }))?.direction, "right");
 }
 
-// --- Refractory collapses a double-pulse into one event --------------------
+// --- Refractory period collapses rapid pair into one -----------------------
 {
   const d = new GestureDetector();
   let fired = 0;
@@ -99,29 +99,37 @@ check("weak motion stays silent", feed(new GestureDetector(),
   check("rapid double burst = 1 event", fired, 1);
 }
 
-// --- Sign inversion for reversed grip --------------------------------------
+// --- Sign inversion for users holding phone reversed -----------------------
 {
   const d = new GestureDetector();
   d.setConfig({ invertH: true });
-  check("invertH flips right<->left", feed(d,
-    burst({ gyro: { beta: +400 } }))?.direction, "left");
+  check("invertH flips right <-> left",
+    feed(d, burst({ gyro: { beta: +400 } }))?.direction, "left");
 }
 {
   const d = new GestureDetector();
   d.setConfig({ invertV: true });
-  // invertV means the *negative* alpha (the physical chop in reversed
-  // grip) now triggers "down"; positive alpha triggers nothing.
-  check("invertV enables chop on negative alpha", feed(d,
-    burst({ gyro: { alpha: -400 } }))?.direction, "down");
-  const d2 = new GestureDetector();
-  d2.setConfig({ invertV: true });
-  check("invertV suppresses chop on positive alpha", feed(d2,
-    burst({ gyro: { alpha: +400 } })), null);
+  check("invertV flips up <-> down",
+    feed(d, burst({ gyro: { alpha: +400 } }))?.direction, "up");
 }
 
-// --- Off-axis noise doesn't dislodge dominant axis ------------------------
-check("noisy right still classifies right", feed(new GestureDetector(),
-  burst({ gyro: { beta: +400, alpha: +150 } }))?.direction, "right");
+// --- Dominant axis picking: off-axis noise shouldn't confuse ---------------
+{
+  const d = new GestureDetector();
+  // A right swing with noisy alpha component — beta still dominant.
+  check("noisy right swing still classifies as right",
+    feed(d, burst({ gyro: { beta: +450, alpha: +100 } }))?.direction, "right");
+}
+
+// --- Config persistence ----------------------------------------------------
+{
+  const d = new GestureDetector();
+  d.setConfig({ sensitivity: 0.5, invertH: true, invertV: false });
+  const cfg = d.getConfig();
+  check("config round-trips sensitivity", cfg.sensitivity, 0.5);
+  check("config round-trips invertH",     cfg.invertH,     true);
+  check("config round-trips invertV",     cfg.invertV,     false);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -121,13 +121,8 @@ body.controller {
   height: 100%; width: 0%; transition: width 60ms linear;
   background: var(--accent);
 }
-.bar-fill.acc    { background: #f0b429; }
-.bar-fill.gyro   { background: #5ab4ff; }
-.bar-fill.accent { background: #9de06b; }
-.bar-divider {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
-  color: var(--dim); margin-top: 4px; opacity: 0.7;
-}
+.bar-fill.acc  { background: #f0b429; }
+.bar-fill.gyro { background: #5ab4ff; }
 .stat-row {
   display: flex; gap: 14px; font-size: 12px; color: var(--dim);
   flex-wrap: wrap;

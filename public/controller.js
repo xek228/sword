@@ -10,21 +10,15 @@ const startBtn = $("start-btn");
 const gate = $("permission-gate");
 const ui = $("play-ui");
 
-const barBeta    = $("bar-beta");
-const barAlpha   = $("bar-alpha");
-const barAcc     = $("bar-acc");
-const barLateral = $("bar-lateral");
-const barVertical= $("bar-vertical");
-const vBeta     = $("v-beta");
-const vAlpha    = $("v-alpha");
-const vAcc      = $("v-acc");
-const vLateral  = $("v-lateral");
-const vVertical = $("v-vertical");
+const barBeta  = $("bar-beta");
+const barAlpha = $("bar-alpha");
+const barGamma = $("bar-gamma");
+const barAcc   = $("bar-acc");
+const vBeta  = $("v-beta");
+const vAlpha = $("v-alpha");
+const vGamma = $("v-gamma");
+const vAcc   = $("v-acc");
 const lastSwing = $("last-swing");
-
-// Must match ACCEL_TO_DPS in server/gestureDetector.js so the bars the
-// user sees match the scores the server classifies on.
-const ACCEL_TO_DPS = 22;
 
 const sensSlider = $("sens-slider");
 const sensVal = $("sens-val");
@@ -117,15 +111,12 @@ function onMotion(ev) {
     rotationRate,
   });
 
-  // Live bars: two fused scores match the server's classifier output.
+  // Live bars.
   const aMag = Math.hypot(accel.x, accel.y, accel.z);
-  const lateralScore  = rotationRate.beta  + ACCEL_TO_DPS * accel.x;
-  const verticalScore = rotationRate.alpha + ACCEL_TO_DPS * (-accel.y - accel.z);
-  renderBar(barLateral,  vLateral,  lateralScore,  600);
-  renderBar(barVertical, vVertical, verticalScore, 600);
   renderBar(barBeta,  vBeta,  rotationRate.beta,  600);
   renderBar(barAlpha, vAlpha, rotationRate.alpha, 600);
-  renderBar(barAcc,   vAcc,   aMag,                40);
+  renderBar(barGamma, vGamma, rotationRate.gamma, 600);
+  renderBar(barAcc,   vAcc,   aMag,               40);
 }
 
 function renderBar(el, valEl, v, scale) {
