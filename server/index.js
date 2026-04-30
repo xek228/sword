@@ -25,9 +25,47 @@ const MIME = {
   ".ico": "image/x-icon",
 };
 
+// Find the mkcert root CA on disk so we can serve it to an iPhone that needs
+// to trust locally-issued certs. iOS Safari auto-triggers the profile install
+// flow when it sees application/x-x509-ca-cert.
+function findMkcertRootCA() {
+  const candidates = [
+    process.env.CAROOT && path.join(process.env.CAROOT, "rootCA.pem"),
+    path.join(os.homedir(), "Library/Application Support/mkcert/rootCA.pem"), // macOS
+    path.join(os.homedir(), ".local/share/mkcert/rootCA.pem"),                  // Linux
+    path.join(os.homedir(), "AppData/Local/mkcert/rootCA.pem"),                 // Windows
+  ].filter(Boolean);
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+const MKCERT_ROOT_CA = findMkcertRootCA();
+
 function serveStatic(req, res) {
   const parsed = url.parse(req.url);
   let pathname = decodeURIComponent(parsed.pathname || "/");
+
+  // Special route: serve mkcert's root CA so the iPhone can install it via
+  // Safari (one tap → Profile Downloaded → Install in Settings).
+  if (pathname === "/rootCA.pem" || pathname === "/mkcert-rootCA.pem") {
+    if (!MKCERT_ROOT_CA) {
+      res.writeHead(404, { "content-type": "text/plain" });
+      return res.end("mkcert root CA not found. Run `mkcert -install` on this Mac first.");
+    }
+    fs.readFile(MKCERT_ROOT_CA, (err, data) => {
+      if (err) { res.writeHead(500); return res.end("read error"); }
+      res.writeHead(200, {
+        "content-type": "application/x-x509-ca-cert",
+        "content-disposition": "attachment; filename=mkcert-rootCA.pem",
+        "cache-control": "no-cache",
+      });
+      res.end(data);
+    });
+    return;
+  }
+
   if (pathname === "/") pathname = "/index.html";
   const filePath = path.join(ROOT, pathname);
   if (!filePath.startsWith(ROOT)) {
@@ -128,10 +166,19 @@ function start(server, label) {
   server.on("request", serveStatic);
   server.listen(server.__port, () => {
     const ips = localIps();
+    const scheme = label.toLowerCase();
     console.log(`[${label}] listening on :${server.__port}`);
-    console.log(`  Game (Mac):  ${label.toLowerCase()}://localhost:${server.__port}/`);
+    console.log(`  Game (Mac):  ${scheme}://localhost:${server.__port}/`);
     for (const ip of ips) {
-      console.log(`  Controller:  ${label.toLowerCase()}://${ip}:${server.__port}/controller.html`);
+      console.log(`  Controller:  ${scheme}://${ip}:${server.__port}/controller.html`);
+    }
+    if (label === "HTTP" && MKCERT_ROOT_CA) {
+      console.log(`  iPhone one-time trust step — open on the iPhone in Safari:`);
+      for (const ip of ips) {
+        console.log(`    http://${ip}:${server.__port}/rootCA.pem`);
+      }
+      console.log(`  Then: Settings → General → VPN & Device Management → Install,`);
+      console.log(`        Settings → General → About → Certificate Trust Settings → enable mkcert.`);
     }
   });
 }
