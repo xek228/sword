@@ -80,21 +80,65 @@ cloudflared tunnel --url http://localhost:8080
 Open the generated `https://<random>.trycloudflare.com` URL on both the Mac
 game tab and the iPhone controller tab.
 
+## Per-user calibration (recommended)
+
+Default classification assumes you hold the phone in portrait with a fairly
+typical swing style. That's rarely true for everyone, so the controller page
+has a **Calibrate swings** button that runs a 5-step wizard:
+
+1. Swing **right** (left-to-right horizontal slash)
+2. Swing **left**
+3. Swing **up** (uppercut)
+4. Swing **down** (overhead chop)
+5. **Thrust** (push the phone forward)
+
+For each step the server records the peak acceleration vector. After all
+five are captured, the detector classifies new swings by **cosine
+similarity** to those vectors — picking whichever direction's template is
+most similar.
+
+Templates are persisted in `localStorage` on the phone (scoped by the `room`
+query param) and automatically re-synced to the server after every reconnect.
+
 ## How the gesture detector works
 
-`server/gestureDetector.js` runs a peak detector on the acceleration magnitude.
-When magnitude crosses a threshold and then starts falling, it picks the axis
-with the largest signed peak over the last 200 ms and classifies:
+`server/gestureDetector.js` runs a peak detector on the acceleration
+magnitude. When magnitude crosses a threshold and then starts falling, it
+finds the peak sample over the last 200 ms and classifies in one of two
+modes:
 
-- large `+y` → **up**      large `-y` → **down**
-- large `+x` → **right**   large `-x` → **left**
-- dominant `z` with lower magnitude → **thrust**
+- **Template mode** (after calibration, ≥ 3 templates registered):
+  cosine similarity of the peak vector vs each stored template; largest
+  wins, below `TEMPLATE_MIN_COSINE` the swing is rejected.
+- **Axis mode** (fallback, no / few templates): pick the dominant signed
+  axis of the peak — `+x → right`, `-x → left`, `+y → up`, `-y → down`,
+  dominant `z` with lower magnitude → `thrust`.
 
 A 350 ms refractory period prevents follow-through double-triggers.
 
 Tuning constants are at the top of `server/gestureDetector.js`
-(`SWING_PEAK_G`, `THRUST_PEAK_G`, `REFRACTORY_MS`, `WINDOW_MS`). Log
-`ingest()`'s `peakMag` to the console and calibrate to your own swing style.
+(`SWING_PEAK_G`, `THRUST_PEAK_G`, `REFRACTORY_MS`, `WINDOW_MS`,
+`CALIB_MIN_PEAK`, `TEMPLATE_MIN_COSINE`).
+
+## Deploying for friction-free sharing
+
+To let other players try the prototype without mkcert / cloudflared /
+same-Wi-Fi dance, deploy the server to any HTTPS host. The repo ships with
+a `Dockerfile` and `fly.toml` for [Fly.io](https://fly.io):
+
+```bash
+curl -L https://fly.io/install.sh | sh
+fly auth login
+fly launch --copy-config --name <unique-app-name> --no-deploy
+fly deploy
+```
+
+Once deployed, anyone opens `https://<app>.fly.dev/` on their Mac and
+`https://<app>.fly.dev/controller.html` on their iPhone — iOS prompts for
+motion access normally, no profile-trust setup needed.
+
+Use `?room=<code>` on both URLs to pair a specific Mac ↔ iPhone pair so
+multiple players on the same host don't collide.
 
 ## Architecture
 
