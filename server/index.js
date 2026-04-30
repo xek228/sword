@@ -148,6 +148,20 @@ function attachWs(wss) {
       } else if (msg.type === "calibrate") {
         room.detector.calibrate();
         broadcast(room.games, { type: "calibrated" });
+      } else if (msg.type === "calibrate:start") {
+        const ok = room.detector.startCalibration(msg.direction);
+        ws.send(JSON.stringify({ type: "calibrate:started", direction: msg.direction, ok }));
+      } else if (msg.type === "calibrate:end") {
+        const captured = room.detector.endCalibration();
+        ws.send(JSON.stringify({ type: "calibrate:recorded", captured }));
+        if (captured) broadcast(room.games, { type: "calibrate:recorded", captured });
+      } else if (msg.type === "calibrate:templates") {
+        // Client pushed a previously-stored template set (from localStorage).
+        room.detector.setTemplates(msg.templates || {});
+        ws.send(JSON.stringify({ type: "calibrate:templates-ack", templates: room.detector.getTemplates() }));
+      } else if (msg.type === "calibrate:reset") {
+        room.detector.clearTemplates();
+        ws.send(JSON.stringify({ type: "calibrate:templates-ack", templates: {} }));
       }
     });
 

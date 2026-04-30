@@ -26,11 +26,43 @@
         <div><span>|a|</span><b id="mag">0</b></div>
         <div><span>last</span><b id="ctrl-last">—</b></div>
       </div>
+
+      <div id="calib-banner" class="calib-banner" hidden></div>
+
       <div id="touch-pad">
         <button class="big" data-btn="block">HOLD TO BLOCK</button>
-        <button class="big" data-btn="calibrate">Calibrate</button>
+        <button class="big" id="open-calib">Calibrate swings</button>
       </div>
       <p class="hint">Swing the phone: up / down / left / right, or push forward for a thrust.</p>
+      <p class="hint" id="calib-status">Using default axis-based detection. Calibrate for better recognition of your swings.</p>
+    </div>
+
+    <!-- Calibration wizard overlay -->
+    <div id="calib-overlay" class="calib-overlay" hidden>
+      <div class="calib-card">
+        <h2 id="calib-title">Calibration</h2>
+        <p id="calib-instruction" class="calib-instruction"></p>
+
+        <div id="calib-ready" class="calib-visual">
+          <div class="calib-arrow" id="calib-arrow">→</div>
+        </div>
+
+        <div class="calib-progress">
+          <span data-step="right">right</span>
+          <span data-step="left">left</span>
+          <span data-step="up">up</span>
+          <span data-step="down">down</span>
+          <span data-step="thrust">thrust</span>
+        </div>
+
+        <div class="calib-countdown" id="calib-countdown"></div>
+        <p id="calib-feedback" class="hint"></p>
+
+        <div class="calib-actions">
+          <button class="big ghost" id="calib-cancel">Cancel</button>
+          <button class="big primary" id="calib-next">Start</button>
+        </div>
+      </div>
     </div>
   </div>
   <script type="module" src="/controller.js"></script>

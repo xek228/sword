@@ -76,5 +76,58 @@ function expect(name, got, want) {
   expect("refractory collapses to 1", fired, 1);
 }
 
+// --- Calibration / template-based classification -------------------------
+{
+  // Record 5 templates (right, left, up, down, thrust) using startCalibration
+  // / endCalibration, then verify that a new swing is classified by cosine
+  // similarity to the recorded vectors.
+  const d = new GestureDetector();
+  const register = (dir, axis, sign, peak, t0) => {
+    d.startCalibration(dir);
+    for (const s of swing(axis, sign, peak, t0)) {
+      d.ingest({ t: s.t, acceleration: { x: s.x, y: s.y, z: s.z } });
+    }
+    return d.endCalibration();
+  };
+  const r1 = register("right",  "x", +1, 25,  500);
+  const r2 = register("left",   "x", -1, 25, 1500);
+  const r3 = register("up",     "y", +1, 25, 2500);
+  const r4 = register("down",   "y", -1, 25, 3500);
+  const r5 = register("thrust", "z", -1, 18, 4500);
+  expect("calibration captured right",  r1?.direction, "right");
+  expect("calibration captured thrust", r5?.direction, "thrust");
+
+  // Now classify a new right-swing.
+  const evt = feed(d, swing("x", +1, 30, 6000));
+  expect("template-classified right", evt?.direction, "right");
+
+  // Classify an off-axis swing: mostly +x but with noise in y. Should still
+  // resolve to "right" because the cosine similarity to the right template
+  // remains the strongest.
+  const noisy = swing("x", +1, 30, 7000).map((s) => ({ ...s, y: s.x * 0.15 }));
+  const evt2 = feed(d, noisy);
+  expect("template-classified noisy right", evt2?.direction, "right");
+}
+{
+  // setTemplates validates and drops malformed entries (NaN, too weak).
+  const d = new GestureDetector();
+  d.setTemplates({
+    right:  { v: { x: 25, y: 0, z: 0 }, mag: 25 },
+    left:   { v: { x: -25, y: 0, z: 0 }, mag: 25 },
+    up:     { v: { x: 0, y: 25, z: 0 }, mag: 25 },
+    down:   { v: { x: 0, y: -25, z: 0 }, mag: 25 },
+    thrust: { v: { x: 0, y: 0, z: -18 }, mag: 18 },
+    garbage:{ v: { x: NaN, y: 0, z: 0 }, mag: 10 },
+    weak:   { v: { x: 1, y: 0, z: 0 }, mag: 2 },
+  });
+  const t = d.getTemplates();
+  expect("templates kept: right",    !!t.right,    true);
+  expect("templates dropped: garbage", !!t.garbage, false);
+  expect("templates dropped: weak",    !!t.weak,    false);
+
+  const evt = feed(d, swing("y", -1, 30, 1000));
+  expect("pre-loaded templates classify down", evt?.direction, "down");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

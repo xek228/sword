@@ -116,8 +116,11 @@ const sword = new THREE.Group();
   sword.add(pommel);
 }
 // Attach sword to camera (first-person-ish).
-sword.position.set(0.35, -0.3, -0.6);
-sword.rotation.set(-0.2, -0.15, -0.15);
+// Held at the right hip with the blade tilted forward and slightly inward,
+// so the tip points roughly at the target. Rotation order matters —
+// THREE.Euler defaults to XYZ, so X (pitch) applies first.
+sword.position.set(0.32, -0.34, -0.55);
+sword.rotation.set(-Math.PI / 3.2, -0.05, -0.25);
 camera.add(sword);
 scene.add(camera);
 
@@ -156,9 +159,13 @@ function directionOffsets(dir) {
       ];
     case "thrust":
     default:
+      // Windup pulls the sword back and slightly up; strike drops the
+      // forward tilt so the blade ends horizontal (tip at the target).
+      // baseRot.x = -PI/3.2, so an offset of -(PI/2 - PI/3.2) = -0.59
+      // rotates the blade from ~-56° to ~-90° (fully forward).
       return [
-        { pos: new THREE.Vector3(0, 0,  0.10), rot: new THREE.Euler(0, 0, 0) },
-        { pos: new THREE.Vector3(0, 0, -0.55), rot: new THREE.Euler(0, 0, 0) },
+        { pos: new THREE.Vector3(-0.05, 0.05,  0.10), rot: new THREE.Euler( 0.15, 0, 0) },
+        { pos: new THREE.Vector3(-0.15, 0.12, -0.60), rot: new THREE.Euler(-0.59, 0.05, 0.25) },
       ];
   }
 }
