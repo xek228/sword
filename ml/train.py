@@ -152,11 +152,13 @@ def extract_labeled_windows(grids: list[tuple[str, np.ndarray]],
     X = []
     y = []
     half = WINDOW_LEN // 2
-    # Live inference centers windows on detected rotation-magnitude peaks,
-    # so the model only ever sees windows where the peak is in the middle.
-    # Small jitter helps tolerate ±1-2 samples of peak-detection error and
-    # natural variation in where the peak falls during a swing.
-    OFFSETS = [-4, -2, 0, 2, 4]
+    # Live inference fires shortly after a peak, so the window passed to
+    # the model has the peak near the *end*, not the center. We train on
+    # windows where the peak sits at frame ~33-41 of 42 (i.e. ~1-9
+    # frames before the end) so the model expects this layout. Small
+    # jitter tolerates ±2-sample peak-detection error and per-swing
+    # variation. Reduces classification latency to ~100-130ms.
+    OFFSETS = [-19, -17, -15, -13, -11]
     for label, g in grids:
         T = g.shape[0]
         if label in ("right", "left", "down"):

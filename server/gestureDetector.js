@@ -63,10 +63,11 @@ const RIGHT_ACC_THRESH = 38; // between chop/left max (~35) and right min (~40)
 // was trained on (windows centered on rotation peaks) and avoids
 // out-of-distribution inputs that produce phantom fires during the
 // rising / decaying edges of a swing or its recoil.
-const ML_BUFFER_MS = 1000;          // rolling history we keep
-const ML_PEAK_LAG_MS = 350;         // how far back to look for a "peak now"
+const ML_BUFFER_MS = 900;           // rolling history we keep
+const ML_PEAK_LAG_MS = 100;         // how far back to look for a "peak now"
 const ML_PEAK_MIN_MAG = 600;        // min rotation magnitude to count as a peak
-const ML_PEAK_NEIGHBOURS = 3;       // local-max test radius (in samples)
+const ML_PEAK_NEIGHBOURS = 2;       // local-max test radius (in samples)
+const ML_PEAK_OFFSET_FRAMES = 3;    // peak placement: frame (T-1-N) = frame 38
 const ML_FIRE_PROB = 0.55;
 const ML_FIRE_MARGIN = 0.15;        // winner - none
 const ML_REFRACTORY_MS = 600;
@@ -257,21 +258,32 @@ export class GestureDetector {
   }
 
   _buildWindowAroundPeak(peakIdx, T) {
-    // We want T uniformly-spaced samples centered on peakIdx, spanning
-    // (T-1)/INPUT_HZ seconds (≈ 700ms for T=42 at 60Hz).
+    // T uniformly-spaced samples spanning (T-1)/INPUT_HZ seconds. We
+    // place the peak at frame (T-1 - ML_PEAK_OFFSET_FRAMES) so the
+    // window mostly contains pre-peak data plus a short tail of
+    // post-peak data — matching the model's training layout.
     const INPUT_HZ = 60;
     const spanMs = ((T - 1) / INPUT_HZ) * 1000;
     const hist = this.mlHistory;
-    const tCenter = hist[peakIdx].t;
-    const tStart = tCenter - spanMs / 2;
-    const tEnd   = tCenter + spanMs / 2;
-    if (hist[0].t > tStart) return null;
-    if (hist[hist.length - 1].t < tEnd) return null;
+    const tPeak = hist[peakIdx].t;
+    const peakFrame = T - 1 - ML_PEAK_OFFSET_FRAMES;
+    const dtFrame = spanMs / (T - 1);
+    const tStart = tPeak - peakFrame * dtFrame;
 
+    // Sample T uniformly-spaced frames starting at tStart. If tStart is
+    // before our buffer's earliest sample, repeat the first sample
+    // (effectively zero-padding rotation since the user is at rest before
+    // the swing). If tEnd extends past the last sample, repeat the last
+    // sample (only happens if buffer is short).
     const out = new Array(T);
     let j = 0;
     for (let i = 0; i < T; i++) {
       const t = tStart + (spanMs * i) / (T - 1);
+      if (t <= hist[0].t) {
+        const s = hist[0];
+        out[i] = [s.alpha, s.beta, s.gamma, s.ax, s.ay, s.az];
+        continue;
+      }
       while (j < hist.length - 1 && hist[j + 1].t <= t) j++;
       const s = hist[j];
       out[i] = [s.alpha, s.beta, s.gamma, s.ax, s.ay, s.az];
