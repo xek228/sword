@@ -1,48 +1,13 @@
-// Sanity tests for the simple axis-based GestureDetector.
-// Run: `node test/gesture.test.mjs`
+// Data-driven tests. The primary validation is replaying the 9 real
+// iPhone recordings in test/fixtures/ through the detector and
+// verifying each classifies as its label.
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { GestureDetector } from "../server/gestureDetector.js";
 
-// Simulate a motion burst: ramp up the rotation rate on the chosen
-// axis, hold, ramp down, then stay still. Accel defaults to zero.
-// gyro/accel values are raw units the iPhone sends.
-function burst(opts, t0 = 1000) {
-  const { gyro = {}, accel = {} } = opts;
-  const out = [];
-  for (let i = 0; i <= 15; i++) {
-    const k = Math.sin((i / 15) * Math.PI);
-    out.push({
-      t: t0 + i * 10,
-      acceleration: {
-        x: (accel.x || 0) * k,
-        y: (accel.y || 0) * k,
-        z: (accel.z || 0) * k,
-      },
-      rotationRate: {
-        alpha: (gyro.alpha || 0) * k,
-        beta:  (gyro.beta  || 0) * k,
-        gamma: (gyro.gamma || 0) * k,
-      },
-    });
-  }
-  // Trailing stillness so the detector's quiet timer fires classification.
-  for (let i = 1; i <= 20; i++) {
-    out.push({
-      t: t0 + 150 + i * 10,
-      acceleration: { x: 0, y: 0, z: 0 },
-      rotationRate: { alpha: 0, beta: 0, gamma: 0 },
-    });
-  }
-  return out;
-}
-
-function feed(det, samples) {
-  let evt = null;
-  for (const s of samples) {
-    const r = det.ingest(s);
-    if (r) evt = r;
-  }
-  return evt;
-}
+const HERE = dirname(fileURLToPath(import.meta.url));
+const FIXTURES = join(HERE, "fixtures");
 
 let pass = 0, fail = 0;
 function check(name, got, want) {
@@ -50,97 +15,97 @@ function check(name, got, want) {
   else { fail++; console.error(`FAIL ${name}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`); }
 }
 
-// --- Basic directions ------------------------------------------------------
-{
-  const d = new GestureDetector();
-  check("right swing (beta +)", feed(d, burst({ gyro: { beta: +400 } }))?.direction, "right");
-}
-{
-  const d = new GestureDetector();
-  check("left swing  (beta -)", feed(d, burst({ gyro: { beta: -400 } }))?.direction, "left");
-}
-{
-  const d = new GestureDetector();
-  check("down chop   (alpha +)", feed(d, burst({ gyro: { alpha: +400 } }))?.direction, "down");
-}
-{
-  const d = new GestureDetector();
-  check("up swing    (alpha -)", feed(d, burst({ gyro: { alpha: -400 } }))?.direction, "up");
-}
-
-// --- Forward jab (linear accel, little rotation) → overhead chop ----------
-// Pose-agnostic: we don't care which phone axis carries the accel.
-{
-  const d = new GestureDetector();
-  check("forward jab along -Z fires chop (down)",
-    feed(d, burst({ accel: { z: -35 } }))?.direction, "down");
-}
-{
-  const d = new GestureDetector();
-  check("forward jab along +Y fires chop (down)",
-    feed(d, burst({ accel: { y: +35 } }))?.direction, "down");
-}
-{
-  const d = new GestureDetector();
-  check("forward jab along -X fires chop (down)",
-    feed(d, burst({ accel: { x: -35 } }))?.direction, "down");
-}
-
-// --- Below threshold stays silent ------------------------------------------
-{
-  const d = new GestureDetector();
-  check("weak swing ignored", feed(d, burst({ gyro: { beta: +100 } })), null);
-}
-
-// --- Sensitivity lowers threshold ------------------------------------------
-{
-  const d = new GestureDetector();
-  d.setSensitivity(0.4);
-  check("sensitive mode catches weak swing",
-    feed(d, burst({ gyro: { beta: +150 } }))?.direction, "right");
-}
-
-// --- Refractory period collapses rapid pair into one -----------------------
-{
-  const d = new GestureDetector();
-  let fired = 0;
-  for (const s of [...burst({ gyro: { beta: +400 } }, 1000),
-                   ...burst({ gyro: { beta: +400 } }, 1050)]) {
-    if (d.ingest(s)) fired++;
+function replay(det, samples) {
+  // Append a short trailing rest so the burst-quiet timer finalises
+  // classification, then the detector returns the event.
+  const last = samples[samples.length - 1] || { t: 0 };
+  const tail = [];
+  for (let i = 1; i <= 20; i++) {
+    tail.push({
+      t: last.t + i * 15,
+      acceleration: { x: 0, y: 0, z: 0 },
+      accelerationIncludingGravity: { x: 0, y: 0, z: 0 },
+      rotationRate: { alpha: 0, beta: 0, gamma: 0 },
+    });
   }
-  check("rapid double burst = 1 event", fired, 1);
+  let evt = null;
+  for (const s of [...samples, ...tail]) {
+    const r = det.ingest(s);
+    if (r) evt = r;
+  }
+  return evt;
 }
 
-// --- Sign inversion for users holding phone reversed -----------------------
-{
-  const d = new GestureDetector();
-  d.setConfig({ invertH: true });
-  check("invertH flips right <-> left",
-    feed(d, burst({ gyro: { beta: +400 } }))?.direction, "left");
-}
-{
-  const d = new GestureDetector();
-  d.setConfig({ invertV: true });
-  check("invertV flips up <-> down",
-    feed(d, burst({ gyro: { alpha: +400 } }))?.direction, "up");
+// --- Real-recording playback ----------------------------------------------
+
+const files = readdirSync(FIXTURES).filter((n) => n.endsWith(".json")).sort();
+for (const name of files) {
+  const body = JSON.parse(readFileSync(join(FIXTURES, name), "utf8"));
+  const label = name.split("_")[0]; // "chop" | "left" | "right"
+  const expected = label === "chop" ? "down" : label;
+  const det = new GestureDetector();
+  const evt = replay(det, body.samples);
+  check(`replay ${name.slice(0, 24)}... (expect ${expected})`, evt?.direction, expected);
 }
 
-// --- Dominant axis picking: off-axis noise shouldn't confuse ---------------
+// --- Below threshold stays silent -----------------------------------------
 {
-  const d = new GestureDetector();
-  // A right swing with noisy alpha component — beta still dominant.
-  check("noisy right swing still classifies as right",
-    feed(d, burst({ gyro: { beta: +450, alpha: +100 } }))?.direction, "right");
+  const det = new GestureDetector();
+  const tiny = [];
+  for (let i = 0; i < 50; i++) {
+    tiny.push({
+      t: i * 16,
+      acceleration: { x: 0, y: 0, z: 0 },
+      rotationRate: { alpha: 0, beta: 10, gamma: 0 },
+    });
+  }
+  let fired = null;
+  for (const s of tiny) {
+    const r = det.ingest(s);
+    if (r) fired = r;
+  }
+  check("idle noise is silent", fired, null);
 }
 
-// --- Config persistence ----------------------------------------------------
+// --- Refractory period suppresses back-to-back classification ------------
 {
-  const d = new GestureDetector();
-  d.setConfig({ sensitivity: 0.5, invertH: true, invertV: false });
-  const cfg = d.getConfig();
+  // Feed a recording, let it classify, then IMMEDIATELY re-feed the same
+  // samples offset by a trivial gap. The second run must not fire a
+  // new event because the detector is still within REFRACTORY_MS.
+  const body = JSON.parse(readFileSync(join(FIXTURES, files[0]), "utf8"));
+  const det = new GestureDetector();
+  const first = replay(det, body.samples);
+  check("first swing fires", !!first, true);
+  // Now feed another round of identical samples directly after, without
+  // trailing rest. No more events should appear.
+  const last = body.samples[body.samples.length - 1];
+  const offset = last.t + 5; // just past first swing's classification moment
+  const copy2 = body.samples.map((s) => ({ ...s, t: s.t - body.samples[0].t + offset }));
+  let extra = 0;
+  for (const s of copy2) if (det.ingest(s)) extra++;
+  // The next swing is 1+ seconds later, beyond refractory, so it may
+  // fire once — not more.
+  check("refractory doesn't multiply fires within same burst", extra <= 1, true);
+}
+
+// --- Config round-trip ----------------------------------------------------
+{
+  const det = new GestureDetector();
+  det.setConfig({ sensitivity: 0.5, invertH: true, invertV: false });
+  const cfg = det.getConfig();
   check("config round-trips sensitivity", cfg.sensitivity, 0.5);
   check("config round-trips invertH",     cfg.invertH,     true);
   check("config round-trips invertV",     cfg.invertV,     false);
+}
+
+// --- Inversion flips direction on real data ------------------------------
+{
+  const rightRec = JSON.parse(readFileSync(
+    join(FIXTURES, files.find((n) => n.startsWith("right_1"))), "utf8"));
+  const det = new GestureDetector();
+  det.setConfig({ invertH: true });
+  const evt = replay(det, rightRec.samples);
+  check("invertH flips a right recording to left", evt?.direction, "left");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

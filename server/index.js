@@ -305,8 +305,12 @@ function attachWs(wss) {
         }
         broadcast(room.games, { type: "orientation", ...msg });
       } else if (msg.type === "record:start") {
-        const label = String(msg.label || "swing").slice(0, 40).replace(/[^a-zA-Z0-9_\-]/g, "_");
-        room.recording = { label, startedAt: Date.now(), samples: [] };
+        // Preserve the user label as-is (including non-ASCII) for the
+        // JSON `label` field; derive a filename-safe slug separately so
+        // the on-disk name stays portable.
+        const label = String(msg.label || "swing").slice(0, 60).trim() || "swing";
+        const slug = label.replace(/[^a-zA-Z0-9_\-]/g, "_").slice(0, 40) || "swing";
+        room.recording = { label, slug, startedAt: Date.now(), samples: [] };
         ws.send(JSON.stringify({ type: "record:started", label }));
       } else if (msg.type === "record:stop") {
         if (!room.recording) {
@@ -315,7 +319,7 @@ function attachWs(wss) {
           const rec = room.recording;
           room.recording = null;
           const ts = new Date(rec.startedAt).toISOString().replace(/[:.]/g, "-");
-          const fname = `${ts}_${rec.label}.json`;
+          const fname = `${ts}_${rec.slug}.json`;
           const body = {
             label: rec.label,
             startedAt: rec.startedAt,

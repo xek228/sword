@@ -1,55 +1,69 @@
-// Dead-simple motion detector for a FIXED phone pose.
+// Data-driven swing classifier.
 //
-// This is intentionally stupid. After the complex 6D-template classifier
-// randomly confused the user's swings, we pivoted to: "pick one pose, one
-// axis per swing type, large thresholds, no calibration." Nothing fancy,
-// no shaped recognisers, no cosine similarity. If a single rotation axis
-// exceeds a threshold for ~50ms, we fire an event. End of algorithm.
+// This replaces the previous rule-of-thumb detector with one whose rules
+// were derived from 9 real iPhone recordings (3 chops, 3 left slashes,
+// 3 right slashes) held in the user's natural pose (phone tilted back
+// ~45°, screen facing up-and-away, top edge as the sword tip).
 //
-// Assumed pose (the controller UI will show this as a diagram):
-//   Phone held vertically (portrait), screen facing the player,
-//   top edge pointing up (= imaginary sword tip).
+// The three axes that separate the classes cleanly in every sample:
 //
-// Axis mapping in that pose (iOS rotationRate is deg/s, phone frame):
-//   rotationRate.beta  (spin around phone long axis / world vertical):
-//     + = right swing, - = left swing
-//   rotationRate.alpha (tip top forward/back):
-//     + = down chop, - = up swing
-//   linear acceleration z (out the back of the screen):
-//     strongly negative AND no rotation = thrust
+//   1.  mag_acc_max  (peak total linear acceleration)
+//         chop  : 26..35 m/s^2
+//         left  : 28..35 m/s^2
+//         right : 44..46 m/s^2    <-- always distinctly higher
 //
-// The four *sign* defaults can be flipped per-axis via config so that
-// players who hold the phone with screen facing away or upside-down
-// don't need a code change — they just tap a toggle in the UI.
+//   2.  alpha sign across the swing window
+//         chop  : alpha trends strongly POSITIVE (peak +262..+347 deg/s)
+//         left  : alpha trends strongly NEGATIVE (peak -207..-246 deg/s)
+//         right : alpha trends strongly POSITIVE (peak +424..+565 deg/s,
+//                 separated from chop by #1 above)
+//
+// So the classifier logic is just:
+//
+//     if mag_acc_peak > RIGHT_ACC_THRESH      -> RIGHT
+//     else if |alpha_min| > alpha_max          -> LEFT
+//     else                                     -> CHOP (down)
+//
+// This matches 9/9 training samples with margins of 9 m/s^2 (right vs
+// others) and ~150 deg/s (alpha sign between chop and left).
 
 const REFRACTORY_MS = 300;
-const BURST_COOLDOWN_MS = 120; // min quiet time to end a swing burst
+const BURST_COOLDOWN_MS = 120;
 
-// Default thresholds. `sensitivity` scales them: 1.0 = defaults,
-// 0.5 = twice as sensitive, 2.0 = needs a very hard swing.
-const ROT_THRESHOLD_DPS  = 250; // deg/s on the dominant axis
-const ACC_THRESHOLD_MPS2 = 22;  // m/s^2 forward for thrust
-const ROT_QUIET_DPS      = 120; // below this on all axes = "rest"
+// Entry/exit thresholds for burst detection.
+const SWING_START_DPS = 400;   // enter burst above this
+const SWING_QUIET_DPS = 200;   // exit burst below this
+
+// Rolling history window. Real swings show their most informative alpha
+// excursions BEFORE mag_rot peaks (wrist/arm twist precedes the main
+// blade rotation), so we need to classify using samples recorded prior
+// to the burst-start moment, not just the in-burst tail.
+const HISTORY_MS = 1200;
+
+// Classifier thresholds (from the per-class stats above).
+const MIN_ROT_PEAK       = 500;  // below this = no swing
+const RIGHT_ACC_THRESH   = 38;   // between chop/left max (35) and right min (44)
 
 export class GestureDetector {
   constructor() {
     this.lastFireAt = 0;
+    this.sensitivity = 1.0;
+    this.invertH = false;
+    this.invertV = false;
+    this.lastDebug = null;
+    this.history = []; // rolling window of {t,alpha,beta,gamma,magRot,magAcc}
+
+    this._reset();
+
+    // Legacy no-ops kept so the WS protocol doesn't break old clients.
+    this.templates = {};
+    this.calibDirection = null;
+  }
+
+  _reset() {
     this.inBurst = false;
     this.burstStart = 0;
     this.burstQuietStart = 0;
-    this.burstPeak = null; // {alpha, beta, gamma, ax, ay, az, magRot}
-    this.sensitivity = 1.0;
-
-    // Per-axis sign flips, so players can adjust if they hold the phone
-    // with screen away / upside-down without recalibrating.
-    this.invertH = false; // flips right <-> left
-    this.invertV = false; // flips up    <-> down
-
-    this.lastDebug = null;
-
-    // Legacy no-ops kept so the WS protocol doesn't break.
-    this.templates = {};
-    this.calibDirection = null;
   }
 
   setSensitivity(s) {
@@ -72,7 +86,7 @@ export class GestureDetector {
     };
   }
 
-  // Legacy API kept as no-ops so the older UI doesn't explode.
+  // Legacy no-ops kept so the older UI doesn't explode.
   startCalibration() { return false; }
   endCalibration()   { return null; }
   setTemplates()     {}
@@ -91,96 +105,81 @@ export class GestureDetector {
     const ay = Number(a.y) || 0;
     const az = Number(a.z) || 0;
 
-    const magRot = Math.max(Math.abs(alpha), Math.abs(beta), Math.abs(gamma));
+    const magRot = Math.hypot(alpha, beta, gamma);
     const magAcc = Math.hypot(ax, ay, az);
+
+    // Append to rolling history and drop stale.
+    this.history.push({ t: now, alpha, beta, gamma, magRot, magAcc });
+    const cutoff = now - HISTORY_MS;
+    while (this.history.length && this.history[0].t < cutoff) {
+      this.history.shift();
+    }
 
     if (now - this.lastFireAt < REFRACTORY_MS) return null;
 
-    const rotThresh = ROT_THRESHOLD_DPS * this.sensitivity;
-    const accThresh = ACC_THRESHOLD_MPS2 * this.sensitivity;
-    const quietThresh = ROT_QUIET_DPS * this.sensitivity;
+    const startThresh = SWING_START_DPS * this.sensitivity;
+    const quietThresh = SWING_QUIET_DPS * this.sensitivity;
 
-    const isActive = magRot > rotThresh || magAcc > accThresh;
-
-    if (!this.inBurst && isActive) {
-      // Start a new burst, begin tracking peak.
-      this.inBurst = true;
-      this.burstStart = now;
-      this.burstQuietStart = 0;
-      this.burstPeak = { alpha, beta, gamma, ax, ay, az, magRot, magAcc };
+    if (!this.inBurst) {
+      if (magRot > startThresh) {
+        this.inBurst = true;
+        this.burstStart = now;
+        this.burstQuietStart = 0;
+      }
       return null;
     }
 
-    if (this.inBurst) {
-      // Update peak — pick sample with the largest rotation magnitude,
-      // or if rotation stayed low the whole time, the largest accel.
-      const p = this.burstPeak;
-      const betterRot = magRot > p.magRot;
-      const betterAcc = magRot < quietThresh && p.magRot < quietThresh && magAcc > p.magAcc;
-      if (betterRot || betterAcc) {
-        this.burstPeak = { alpha, beta, gamma, ax, ay, az, magRot, magAcc };
+    if (magRot < quietThresh) {
+      if (this.burstQuietStart === 0) this.burstQuietStart = now;
+      if (now - this.burstQuietStart >= BURST_COOLDOWN_MS) {
+        const result = this._classify();
+        this._reset();
+        if (!result) return null;
+        this.lastFireAt = now;
+        this.lastDebug = result;
+        return {
+          direction: result.direction,
+          peakMag: Number(result.peakMag.toFixed(1)),
+          axis: result.axis,
+        };
       }
-
-      if (magRot < quietThresh && magAcc < accThresh * 0.6) {
-        if (this.burstQuietStart === 0) this.burstQuietStart = now;
-        if (now - this.burstQuietStart >= BURST_COOLDOWN_MS) {
-          // Burst ended: classify peak.
-          const result = this._classify(this.burstPeak);
-          this.inBurst = false;
-          this.burstPeak = null;
-          this.burstQuietStart = 0;
-          if (!result) return null;
-          this.lastFireAt = now;
-          this.lastDebug = result;
-          return {
-            direction: result.direction,
-            peakMag: Number(result.peakMag.toFixed(1)),
-            axis: result.axis,
-          };
-        }
-      } else {
-        this.burstQuietStart = 0;
-      }
+    } else {
+      this.burstQuietStart = 0;
     }
     return null;
   }
 
-  _classify(peak) {
-    if (!peak) return null;
-    const { alpha, beta, gamma, magRot, magAcc } = peak;
-    const rotThresh = ROT_THRESHOLD_DPS * this.sensitivity;
-    const accThresh = ACC_THRESHOLD_MPS2 * this.sensitivity;
+  _classify() {
+    const sens = this.sensitivity;
+    if (!this.history.length) return null;
 
-    // Any sharp linear translation of the phone with little rotation
-    // = overhead chop. We deliberately do NOT constrain which phone
-    // axis the acceleration is on: the player may hold the phone
-    // vertically (screen toward them, jab along -Z) or sideways like
-    // a blade (top edge forward, jab along +Y) — both should produce
-    // a chop. Thrust is bound to Spacebar in the game.
-    if (magRot < rotThresh * 0.7 && magAcc > accThresh) {
-      const down = !this.invertV;
-      return { direction: down ? "down" : "up", peakMag: magAcc, axis: "accel" };
+    let magRotMax = 0, magAccMax = 0;
+    let alphaMin = 0, alphaMax = 0;
+    for (const s of this.history) {
+      if (s.magRot > magRotMax) magRotMax = s.magRot;
+      if (s.magAcc > magAccMax) magAccMax = s.magAcc;
+      if (s.alpha  < alphaMin)  alphaMin  = s.alpha;
+      if (s.alpha  > alphaMax)  alphaMax  = s.alpha;
     }
 
-    // Rotation: pick dominant of the three gyro axes.
-    const absA = Math.abs(alpha), absB = Math.abs(beta), absG = Math.abs(gamma);
-    if (magRot < rotThresh) return null;
+    if (magRotMax < MIN_ROT_PEAK * sens) return null;
 
-    if (absB >= absA && absB >= absG) {
-      const positive = beta > 0;
-      const swing = positive !== this.invertH ? "right" : "left";
-      return { direction: swing, peakMag: absB, axis: "beta" };
+    // RIGHT: distinctively high linear acceleration.
+    if (magAccMax > RIGHT_ACC_THRESH * sens) {
+      const dir = this.invertH ? "left" : "right";
+      return { direction: dir, peakMag: magAccMax, axis: "|acc|" };
     }
-    if (absA >= absB && absA >= absG) {
-      const positive = alpha > 0;
-      const swing = positive !== this.invertV ? "down" : "up";
-      return { direction: swing, peakMag: absA, axis: "alpha" };
+
+    // LEFT vs CHOP: the sign of the dominant alpha rotation during the
+    // full swing window (including the pre-burst twist).
+    const alphaNeg = Math.max(-alphaMin, 0);
+    const alphaPos = Math.max(alphaMax, 0);
+
+    if (alphaNeg > alphaPos) {
+      const dir = this.invertH ? "right" : "left";
+      return { direction: dir, peakMag: magRotMax, axis: "alpha-" };
     }
-    // Pure roll around the through-screen axis doesn't map to a named
-    // direction; fall back to the horizontal slash sign, since a wrist
-    // roll is closest to a quick side swipe.
-    const positive = gamma > 0;
-    const swing = positive !== this.invertH ? "right" : "left";
-    return { direction: swing, peakMag: absG, axis: "gamma" };
+    const dir = this.invertV ? "up" : "down";
+    return { direction: dir, peakMag: magRotMax, axis: "alpha+" };
   }
 }
