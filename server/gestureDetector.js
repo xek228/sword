@@ -31,7 +31,7 @@ const REFRACTORY_MS = 300;
 const BURST_COOLDOWN_MS = 120;
 
 // Entry/exit thresholds for burst detection.
-const SWING_START_DPS = 400;   // enter burst above this
+const SWING_START_DPS = 500;   // enter burst above this
 const SWING_QUIET_DPS = 200;   // exit burst below this
 
 // Rolling history window. Real swings show their most informative alpha
@@ -40,9 +40,14 @@ const SWING_QUIET_DPS = 200;   // exit burst below this
 // to the burst-start moment, not just the in-burst tail.
 const HISTORY_MS = 1200;
 
-// Classifier thresholds (from the per-class stats above).
-const MIN_ROT_PEAK       = 500;  // below this = no swing
-const RIGHT_ACC_THRESH   = 38;   // between chop/left max (35) and right min (44)
+// Classifier gates. A movement only counts as a swing if it satisfies
+// BOTH a rotation floor AND a linear-acceleration floor. This is the
+// key defence against false positives: passive wrist twists / phone
+// pans produce high rotation but very little linear acceleration, so
+// they fail the acc gate. Real swings always have both.
+const MIN_ROT_PEAK = 600;   // all 11 real recordings have mag_rot_max >= 680
+const MIN_ACC_PEAK = 18;    // all 11 real recordings have mag_acc_max >= 26
+const RIGHT_ACC_THRESH = 38; // between chop/left max (~35) and right min (~40)
 
 export class GestureDetector {
   constructor() {
@@ -163,6 +168,7 @@ export class GestureDetector {
     }
 
     if (magRotMax < MIN_ROT_PEAK * sens) return null;
+    if (magAccMax < MIN_ACC_PEAK * sens) return null;
 
     // RIGHT: distinctively high linear acceleration.
     if (magAccMax > RIGHT_ACC_THRESH * sens) {

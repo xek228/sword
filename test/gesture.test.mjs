@@ -67,6 +67,59 @@ for (const name of files) {
   check("idle noise is silent", fired, null);
 }
 
+// --- Passive twist (high rotation, ~zero acceleration) is NOT a swing -----
+// User complaint: "any small rotation triggers swings". The defence is the
+// MIN_ACC_PEAK gate — real swings always carry linear acceleration, but
+// a passive wrist twist on a stationary arm doesn't.
+{
+  const det = new GestureDetector();
+  const samples = [];
+  // Half-sine ramp of pure rotation up to 800 deg/s with zero accel.
+  for (let i = 0; i <= 30; i++) {
+    const k = Math.sin((i / 30) * Math.PI);
+    samples.push({
+      t: i * 16,
+      acceleration: { x: 0, y: 0, z: 0 },
+      rotationRate: { alpha: 0, beta: 800 * k, gamma: 0 },
+    });
+  }
+  // Trailing rest.
+  for (let i = 1; i <= 20; i++) {
+    samples.push({
+      t: 30 * 16 + i * 16,
+      acceleration: { x: 0, y: 0, z: 0 },
+      rotationRate: { alpha: 0, beta: 0, gamma: 0 },
+    });
+  }
+  let fired = null;
+  for (const s of samples) { const r = det.ingest(s); if (r) fired = r; }
+  check("passive rotation without acceleration does not fire", fired, null);
+}
+
+// --- Passive shake (some accel but well below swing levels) is NOT a swing
+{
+  const det = new GestureDetector();
+  const samples = [];
+  for (let i = 0; i <= 40; i++) {
+    const k = Math.sin((i / 5) * Math.PI); // jiggle
+    samples.push({
+      t: i * 16,
+      acceleration: { x: 4 * k, y: 0, z: 0 },     // 4 m/s^2 max
+      rotationRate: { alpha: 0, beta: 200 * k, gamma: 100 * k },
+    });
+  }
+  for (let i = 1; i <= 20; i++) {
+    samples.push({
+      t: 40 * 16 + i * 16,
+      acceleration: { x: 0, y: 0, z: 0 },
+      rotationRate: { alpha: 0, beta: 0, gamma: 0 },
+    });
+  }
+  let fired = null;
+  for (const s of samples) { const r = det.ingest(s); if (r) fired = r; }
+  check("low-energy shake does not fire", fired, null);
+}
+
 // --- Refractory period suppresses back-to-back classification ------------
 {
   // Feed a recording, let it classify, then IMMEDIATELY re-feed the same
