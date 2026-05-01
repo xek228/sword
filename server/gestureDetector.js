@@ -142,6 +142,11 @@ export class GestureDetector {
         if (!result) return null;
         this.lastFireAt = now;
         this.lastDebug = result;
+        // Clear history so the just-classified peak can't bleed into
+        // the next swing's window. Without this, a second small burst
+        // fired ~500ms after a real swing re-uses the old peak from
+        // history and produces a phantom duplicate event.
+        this.history = [];
         return {
           direction: result.direction,
           peakMag: Number(result.peakMag.toFixed(1)),
