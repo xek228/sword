@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>iPhone Sword Prototype — Game</title>
+  <link rel="stylesheet" href="/style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body class="game">
+  <div id="hud">
+    <div id="status">
+      <div class="row"><span class="label">Controller</span><span id="controller-status" class="value">—</span></div>
+      <div class="row"><span class="label">Last attack</span><span id="last-attack" class="value">—</span></div>
+    </div>
+    <div id="indicator">
+      <div class="indicator-cell" data-dir="up"></div>
+      <div class="indicator-cell" data-dir="left"></div>
+      <div class="indicator-cell" data-dir="thrust"></div>
+      <div class="indicator-cell" data-dir="right"></div>
+      <div class="indicator-cell" data-dir="down"></div>
+    </div>
+    <div id="dummy-hp">Dummy: <span id="dummy-hp-value">100</span></div>
+    <div id="instructions">
+      <p><b>Controller:</b> open <code id="ctrl-url"></code> on your iPhone (same Wi-Fi).</p>
+      <p><b>Keyboard fallback:</b> W/A/S/D = up/left/down/right swing, Space = thrust.</p>
+    </div>
+  </div>
+  <canvas id="canvas"></canvas>
+  <script type="module" src="/game.js"></script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Sword Controller</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="controller">
+  <div id="ctrl-root">
+    <header>
+      <h1>Sword</h1>
+      <div id="conn" class="pill">disconnected</div>
+    </header>
+
+    <div id="permission-gate">
+      <p>Tap to enable motion sensors. iOS requires a user gesture.</p>
+      <button id="start-btn">Enable motion &amp; connect</button>
+      <p class="hint">If the button does nothing, open this page over <b>HTTPS</b> — iOS requires a secure context for motion permissions.</p>
+      <div id="error-box" class="error-box" hidden></div>
+    </div>
+
+    <div id="play-ui" hidden>
+      <!-- Pose instruction card. This is THE key UX piece now. -->
+      <div class="pose-card">
+        <div class="pose-diagram">📱</div>
+        <div class="pose-text">
+          <b>Hold the phone like a sword grip,</b> tilted back ~45° so the
+          top edge (the "blade tip") points up-and-forward. Stand relaxed.
+        </div>
+        <ul class="pose-moves">
+          <li><b>↓</b> <b>Chop</b> — swing blade tip forward-down, like felling wood.</li>
+          <li><b>←</b> <b>Left slash</b> — swing the phone right-to-left across your body.</li>
+          <li><b>→</b> <b>Right slash</b> — swing the phone left-to-right across your body (wind up from your left hip).</li>
+          <li><b>␣</b> <b>Thrust</b> — hit Spacebar on the keyboard.</li>
+        </ul>
+      </div>
+
+      <!-- Live axis readings, clearly labelled. -->
+      <div class="debug-panel">
+        <div class="bar-row"><span>↔ twist (beta)</span><div class="bar-track"><div id="bar-beta"  class="bar-fill gyro"></div></div><b id="v-beta">0</b>°/s</div>
+        <div class="bar-row"><span>↕ tip (alpha)</span><div class="bar-track"><div id="bar-alpha" class="bar-fill gyro"></div></div><b id="v-alpha">0</b>°/s</div>
+        <div class="bar-row"><span>↺ roll (gamma)</span><div class="bar-track"><div id="bar-gamma" class="bar-fill gyro"></div></div><b id="v-gamma">0</b>°/s</div>
+        <div class="bar-row"><span>push (|a|)</span><div class="bar-track"><div id="bar-acc" class="bar-fill acc"></div></div><b id="v-acc">0</b> m/s²</div>
+        <div class="last-swing" id="last-swing">last swing: <b>—</b></div>
+      </div>
+
+      <div class="slider-row">
+        <label>Sensitivity <b id="sens-val">1.0</b> <span class="hint small">(lower = easier)</span></label>
+        <input type="range" id="sens-slider" min="0.3" max="2.0" step="0.05" value="1.0" />
+      </div>
+
+      <div class="toggle-row">
+        <label><input type="checkbox" id="invert-h" /> Flip right ⇄ left</label>
+        <label><input type="checkbox" id="invert-v" /> Flip up ⇄ down</label>
+        <p class="hint small">Check these if your swings trigger the opposite direction.</p>
+      </div>
+
+      <div class="record-card">
+        <h3>Record training data</h3>
+        <p class="hint small">For ML training. Targets: <b>30-40 of each isolated swing</b>, <b>10-15 combos</b>, <b>~2 min of background noise</b>.</p>
+
+        <div class="rec-section">
+          <div class="rec-section-title">Isolated swings <span class="hint small">(tap → swing once → auto-save in 1.8s)</span></div>
+          <div class="quick-rec-row">
+            <button class="big quick-rec" data-rec="right">Right slash <span class="count" id="cnt-right">0</span></button>
+            <button class="big quick-rec" data-rec="left">Left slash <span class="count" id="cnt-left">0</span></button>
+            <button class="big quick-rec" data-rec="down">Chop / down <span class="count" id="cnt-down">0</span></button>
+          </div>
+        </div>
+
+        <div class="rec-section">
+          <div class="rec-section-title">Combo <span class="hint small">(record a sequence; trains transitions)</span></div>
+          <div class="combo-row">
+            <select id="combo-seq">
+              <option value="right-left-down">right → left → down</option>
+              <option value="down-left-right">down → left → right</option>
+              <option value="left-right-down">left → right → down</option>
+              <option value="right-down-left">right → down → left</option>
+              <option value="left-down-right">left → down → right</option>
+              <option value="down-right-left">down → right → left</option>
+              <option value="right-left-right-left">right ⇄ left ⇄ right ⇄ left</option>
+              <option value="down-down-down">down × 3</option>
+              <option value="right-right-right">right × 3</option>
+              <option value="left-left-left">left × 3</option>
+            </select>
+            <button class="big combo-btn" id="combo-btn">Start combo <span class="count" id="cnt-combo">0</span></button>
+          </div>
+          <p class="hint small">Tap Start, then perform the displayed sequence in order at your natural pace. Tap Stop when done.</p>
+        </div>
+
+        <div class="rec-section">
+          <div class="rec-section-title">Background noise <span class="hint small">(stand, walk, tilt phone — anything except swings)</span></div>
+          <button class="big bg-btn" id="bg-btn">Record 30s background <span class="count" id="cnt-bg">0</span></button>
+        </div>
+
+        <div class="rec-status" id="rec-status">Ready.</div>
+
+        <details class="rec-advanced">
+          <summary>Advanced: free-form recording</summary>
+          <input type="text" id="rec-label" placeholder="label" value="swing" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+          <button class="rec-btn" id="rec-btn">Start manual</button>
+        </details>
+      </div>
+
+      <div id="touch-pad">
+        <button class="big" data-btn="block">HOLD TO BLOCK</button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/controller.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "iphone-sword-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Use an iPhone as a motion controller for a Mount & Blade-style 4-directional sword combat prototype running in a Mac browser.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "lint": "node --check server/index.js && node --check server/gestureDetector.js && node --check server/swingModel.js && node --check public/game.js && node --check public/controller.js",
+    "test": "node test/gesture.test.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+certs/
+recordings/
+.DS_Store
+*.log
+
+# Python venv / cache for ML pipeline.
+__pycache__/
+*.pyc
+.venv/
+training-data/
