@@ -297,6 +297,62 @@ recBtn.addEventListener("click", () => {
   }
 });
 
+// --- Quick-record buttons (for ML training data collection) ----------------
+//
+// Each tap on a Right/Left/Down button: short start beep, auto-record for
+// ~1.8s, end beep, save. The user can immediately tap the next button and
+// continue. Counter increments on save.
+
+const QUICK_REC_DURATION_MS = 1800;
+const QUICK_COUNTS_KEY = `sword-rec-counts:${room}`;
+let quickCounts = loadQuickCounts();
+renderQuickCounts();
+
+function loadQuickCounts() {
+  try {
+    const raw = localStorage.getItem(QUICK_COUNTS_KEY);
+    if (raw) return { right: 0, left: 0, down: 0, ...JSON.parse(raw) };
+  } catch {}
+  return { right: 0, left: 0, down: 0 };
+}
+function saveQuickCounts() {
+  try { localStorage.setItem(QUICK_COUNTS_KEY, JSON.stringify(quickCounts)); } catch {}
+}
+function renderQuickCounts() {
+  const r = $("cnt-right"); if (r) r.textContent = quickCounts.right;
+  const l = $("cnt-left");  if (l) l.textContent = quickCounts.left;
+  const d = $("cnt-down");  if (d) d.textContent = quickCounts.down;
+}
+
+let quickInProgress = false;
+const quickButtons = document.querySelectorAll(".quick-rec");
+quickButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (quickInProgress) return;
+    if (recState !== "idle") return;
+    const label = btn.dataset.rec; // "right" | "left" | "down"
+    quickInProgress = true;
+    quickButtons.forEach((b) => b.disabled = true);
+    btn.classList.add("recording");
+    send({ type: "record:start", label });
+    beep(880, 120);
+    setRecState("recording");
+    recStatus.textContent = `Recording ${label}…`;
+    setTimeout(() => {
+      send({ type: "record:stop" });
+      beep(440, 180);
+      setRecState("idle");
+      // Optimistically bump counter (we'll see record:saved confirmation in the WS handler).
+      quickCounts[label] = (quickCounts[label] || 0) + 1;
+      saveQuickCounts();
+      renderQuickCounts();
+      btn.classList.remove("recording");
+      quickButtons.forEach((b) => b.disabled = false);
+      quickInProgress = false;
+    }, QUICK_REC_DURATION_MS);
+  });
+});
+
 
 
 // --- Touch buttons --------------------------------------------------------

@@ -190,9 +190,28 @@ body.controller {
   background: #0b0f18; color: var(--fg); font-size: 14px;
 }
 .record-card code { background: #0b0f18; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
-.rec-btn { background: #2a7d3a; color: #fff; border-color: #2a7d3a; }
+.rec-btn { background: #2a7d3a; color: #fff; border-color: #2a7d3a; padding: 10px 14px; }
 .rec-btn.recording { background: #b33; border-color: #b33; animation: pulse 0.8s infinite alternate; }
 @keyframes pulse { from { opacity: 1; } to { opacity: 0.75; } }
+.quick-rec-row { display: flex; flex-direction: column; gap: 8px; }
+.quick-rec {
+  padding: 16px; font-size: 16px; border-radius: 10px; font-weight: 600;
+  background: #1c4d3a; color: #fff; border: 1px solid #2c7d5a;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.quick-rec[data-rec="right"] { background: #1c4d3a; border-color: #2c7d5a; }
+.quick-rec[data-rec="left"]  { background: #4d2a1c; border-color: #7d4a2c; }
+.quick-rec[data-rec="down"]  { background: #2a3a4d; border-color: #4a5d7d; }
+.quick-rec.recording { background: #b33 !important; border-color: #b33; animation: pulse 0.8s infinite alternate; }
+.quick-rec:disabled { opacity: 0.45; }
+.quick-rec .count {
+  background: rgba(0,0,0,0.35); padding: 3px 9px; border-radius: 999px;
+  font-size: 14px; min-width: 28px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.rec-advanced { font-size: 12px; color: var(--dim); margin-top: 4px; }
+.rec-advanced summary { cursor: pointer; padding: 4px 0; }
+.rec-advanced > input, .rec-advanced > button { margin-top: 6px; width: 100%; }
 .rec-status {
   font-size: 12px; color: var(--dim); padding: 6px 8px;
   background: #0b0f18; border-radius: 6px; border: 1px solid #1c2231;
