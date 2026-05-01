@@ -297,42 +297,52 @@ recBtn.addEventListener("click", () => {
   }
 });
 
-// --- Quick-record buttons (for ML training data collection) ----------------
+// --- ML training data recorder --------------------------------------------
 //
-// Each tap on a Right/Left/Down button: short start beep, auto-record for
-// ~1.8s, end beep, save. The user can immediately tap the next button and
-// continue. Counter increments on save.
+// Three modes:
+//  (1) Quick isolated-swing buttons  → 1.8s auto-record per tap
+//  (2) Combo: record a longer take with an announced sequence
+//  (3) Background noise: 30s of "no swing" baseline
 
 const QUICK_REC_DURATION_MS = 1800;
-const QUICK_COUNTS_KEY = `sword-rec-counts:${room}`;
-let quickCounts = loadQuickCounts();
-renderQuickCounts();
+const BG_REC_DURATION_MS = 30000;
+const COUNTS_KEY = `sword-rec-counts:${room}`;
+let recCounts = loadCounts();
+renderCounts();
 
-function loadQuickCounts() {
+function loadCounts() {
   try {
-    const raw = localStorage.getItem(QUICK_COUNTS_KEY);
-    if (raw) return { right: 0, left: 0, down: 0, ...JSON.parse(raw) };
+    const raw = localStorage.getItem(COUNTS_KEY);
+    if (raw) return { right: 0, left: 0, down: 0, combo: 0, bg: 0, ...JSON.parse(raw) };
   } catch {}
-  return { right: 0, left: 0, down: 0 };
+  return { right: 0, left: 0, down: 0, combo: 0, bg: 0 };
 }
-function saveQuickCounts() {
-  try { localStorage.setItem(QUICK_COUNTS_KEY, JSON.stringify(quickCounts)); } catch {}
+function saveCounts() {
+  try { localStorage.setItem(COUNTS_KEY, JSON.stringify(recCounts)); } catch {}
 }
-function renderQuickCounts() {
-  const r = $("cnt-right"); if (r) r.textContent = quickCounts.right;
-  const l = $("cnt-left");  if (l) l.textContent = quickCounts.left;
-  const d = $("cnt-down");  if (d) d.textContent = quickCounts.down;
+function renderCounts() {
+  for (const k of ["right", "left", "down", "combo", "bg"]) {
+    const el = $("cnt-" + k);
+    if (el) el.textContent = recCounts[k] || 0;
+  }
 }
 
-let quickInProgress = false;
+// State machine: only one recording at a time. UI disables ALL recorders
+// while one is active so we can't double-trigger record:start.
+let recBusy = false;
+const allRecBtns = () =>
+  Array.from(document.querySelectorAll(".quick-rec, #combo-btn, #bg-btn, #rec-btn"));
+
+function lockUI() { recBusy = true;  allRecBtns().forEach((b) => (b.disabled = true)); }
+function unlockUI() { recBusy = false; allRecBtns().forEach((b) => (b.disabled = false)); }
+
+// (1) Quick isolated-swing buttons -----------------------------------------
 const quickButtons = document.querySelectorAll(".quick-rec");
 quickButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
-    if (quickInProgress) return;
-    if (recState !== "idle") return;
+    if (recBusy || recState !== "idle") return;
     const label = btn.dataset.rec; // "right" | "left" | "down"
-    quickInProgress = true;
-    quickButtons.forEach((b) => b.disabled = true);
+    lockUI();
     btn.classList.add("recording");
     send({ type: "record:start", label });
     beep(880, 120);
@@ -342,15 +352,77 @@ quickButtons.forEach((btn) => {
       send({ type: "record:stop" });
       beep(440, 180);
       setRecState("idle");
-      // Optimistically bump counter (we'll see record:saved confirmation in the WS handler).
-      quickCounts[label] = (quickCounts[label] || 0) + 1;
-      saveQuickCounts();
-      renderQuickCounts();
+      recCounts[label] = (recCounts[label] || 0) + 1;
+      saveCounts(); renderCounts();
       btn.classList.remove("recording");
-      quickButtons.forEach((b) => b.disabled = false);
-      quickInProgress = false;
+      unlockUI();
     }, QUICK_REC_DURATION_MS);
   });
+});
+
+// (2) Combo: manual start/stop with announced sequence ---------------------
+const comboBtn = $("combo-btn");
+const comboSeq = $("combo-seq");
+let comboState = "idle"; // idle | recording
+let comboTimer = null;
+let comboStartedAt = 0;
+
+comboBtn?.addEventListener("click", () => {
+  if (comboState === "idle") {
+    if (recBusy || recState !== "idle") return;
+    const seq = comboSeq.value; // e.g. "right-left-down"
+    const label = "combo_" + seq;
+    lockUI();
+    comboBtn.disabled = false; // keep stop button enabled
+    comboBtn.classList.add("recording");
+    comboBtn.firstChild.nodeValue = "Stop combo ";
+    send({ type: "record:start", label });
+    beep(660, 120); setTimeout(() => beep(990, 120), 180);
+    setRecState("recording");
+    comboStartedAt = performance.now();
+    comboState = "recording";
+    comboTimer = setInterval(() => {
+      const s = ((performance.now() - comboStartedAt) / 1000).toFixed(1);
+      recStatus.textContent = `Recording combo (${seq}) ${s}s…`;
+    }, 100);
+  } else {
+    send({ type: "record:stop" });
+    beep(440, 180);
+    setRecState("idle");
+    if (comboTimer) { clearInterval(comboTimer); comboTimer = null; }
+    recCounts.combo = (recCounts.combo || 0) + 1;
+    saveCounts(); renderCounts();
+    comboBtn.classList.remove("recording");
+    comboBtn.firstChild.nodeValue = "Start combo ";
+    comboState = "idle";
+    unlockUI();
+  }
+});
+
+// (3) Background noise: 30s auto-record ------------------------------------
+const bgBtn = $("bg-btn");
+bgBtn?.addEventListener("click", () => {
+  if (recBusy || recState !== "idle") return;
+  lockUI();
+  bgBtn.classList.add("recording");
+  send({ type: "record:start", label: "bg" });
+  beep(330, 200);
+  setRecState("recording");
+  const startedAt = performance.now();
+  const tick = setInterval(() => {
+    const s = ((performance.now() - startedAt) / 1000).toFixed(1);
+    recStatus.textContent = `Recording background ${s}s / 30s…`;
+  }, 100);
+  setTimeout(() => {
+    clearInterval(tick);
+    send({ type: "record:stop" });
+    beep(220, 250);
+    setRecState("idle");
+    recCounts.bg = (recCounts.bg || 0) + 1;
+    saveCounts(); renderCounts();
+    bgBtn.classList.remove("recording");
+    unlockUI();
+  }, BG_REC_DURATION_MS);
 });
 
 

@@ -58,14 +58,45 @@
       </div>
 
       <div class="record-card">
-        <h3>Record swings for ML training</h3>
-        <p class="hint small">Tap a button, perform <b>one</b> swing of that type, the recording auto-saves after ~1.8s. Aim for 30-50 of each.</p>
-        <div class="quick-rec-row">
-          <button class="big quick-rec" data-rec="right">Right slash <span class="count" id="cnt-right">0</span></button>
-          <button class="big quick-rec" data-rec="left">Left slash <span class="count" id="cnt-left">0</span></button>
-          <button class="big quick-rec" data-rec="down">Chop / down <span class="count" id="cnt-down">0</span></button>
+        <h3>Record training data</h3>
+        <p class="hint small">For ML training. Targets: <b>30-40 of each isolated swing</b>, <b>10-15 combos</b>, <b>~2 min of background noise</b>.</p>
+
+        <div class="rec-section">
+          <div class="rec-section-title">Isolated swings <span class="hint small">(tap → swing once → auto-save in 1.8s)</span></div>
+          <div class="quick-rec-row">
+            <button class="big quick-rec" data-rec="right">Right slash <span class="count" id="cnt-right">0</span></button>
+            <button class="big quick-rec" data-rec="left">Left slash <span class="count" id="cnt-left">0</span></button>
+            <button class="big quick-rec" data-rec="down">Chop / down <span class="count" id="cnt-down">0</span></button>
+          </div>
         </div>
+
+        <div class="rec-section">
+          <div class="rec-section-title">Combo <span class="hint small">(record a sequence; trains transitions)</span></div>
+          <div class="combo-row">
+            <select id="combo-seq">
+              <option value="right-left-down">right → left → down</option>
+              <option value="down-left-right">down → left → right</option>
+              <option value="left-right-down">left → right → down</option>
+              <option value="right-down-left">right → down → left</option>
+              <option value="left-down-right">left → down → right</option>
+              <option value="down-right-left">down → right → left</option>
+              <option value="right-left-right-left">right ⇄ left ⇄ right ⇄ left</option>
+              <option value="down-down-down">down × 3</option>
+              <option value="right-right-right">right × 3</option>
+              <option value="left-left-left">left × 3</option>
+            </select>
+            <button class="big combo-btn" id="combo-btn">Start combo <span class="count" id="cnt-combo">0</span></button>
+          </div>
+          <p class="hint small">Tap Start, then perform the displayed sequence in order at your natural pace. Tap Stop when done.</p>
+        </div>
+
+        <div class="rec-section">
+          <div class="rec-section-title">Background noise <span class="hint small">(stand, walk, tilt phone — anything except swings)</span></div>
+          <button class="big bg-btn" id="bg-btn">Record 30s background <span class="count" id="cnt-bg">0</span></button>
+        </div>
+
         <div class="rec-status" id="rec-status">Ready.</div>
+
         <details class="rec-advanced">
           <summary>Advanced: free-form recording</summary>
           <input type="text" id="rec-label" placeholder="label" value="swing" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
