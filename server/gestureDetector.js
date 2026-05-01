@@ -1,9 +1,15 @@
-// Data-driven swing classifier.
+import { runModel } from "./swingModel.js";
+
+// Swing classifier with two modes:
 //
-// This replaces the previous rule-of-thumb detector with one whose rules
-// were derived from 9 real iPhone recordings (3 chops, 3 left slashes,
-// 3 right slashes) held in the user's natural pose (phone tilted back
-// ~45°, screen facing up-and-away, top edge as the sword tip).
+//   * ML mode (preferred): runs a small 1D CNN on a 0.7s sliding window
+//     of (rot αβγ, accel xyz) at ~60Hz, outputs probabilities over
+//     {none, right, left, down}. Activated automatically when
+//     public/model.json is present.
+//   * Rule mode (fallback): hand-tuned thresholds on burst features,
+//     based on the original 11 recordings. Used until the ML model is
+//     trained.
+//
 //
 // The three axes that separate the classes cleanly in every sample:
 //
@@ -49,14 +55,26 @@ const MIN_ROT_PEAK = 600;   // all 11 real recordings have mag_rot_max >= 680
 const MIN_ACC_PEAK = 18;    // all 11 real recordings have mag_acc_max >= 26
 const RIGHT_ACC_THRESH = 38; // between chop/left max (~35) and right min (~40)
 
+// ML-mode parameters
+const ML_EVAL_INTERVAL_MS = 50;
+const ML_WINDOW_MS = 700;
+const ML_FIRE_PROB = 0.6;
+const ML_REFRACTORY_MS = 250;
+const ML_SMOOTH_ALPHA = 0.5;
+
 export class GestureDetector {
-  constructor() {
+  constructor(opts = {}) {
     this.lastFireAt = 0;
     this.sensitivity = 1.0;
     this.invertH = false;
     this.invertV = false;
     this.lastDebug = null;
     this.history = []; // rolling window of {t,alpha,beta,gamma,magRot,magAcc}
+
+    this.model = opts.model || null;
+    this.mlSmooth = [0, 0, 0, 0];
+    this.mlLastEvalAt = 0;
+    this.mlHistory = []; // raw {t, alpha, beta, gamma, ax, ay, az}
 
     this._reset();
 
@@ -110,6 +128,10 @@ export class GestureDetector {
     const ay = Number(a.y) || 0;
     const az = Number(a.z) || 0;
 
+    if (this.model) {
+      return this._ingestML(now, alpha, beta, gamma, ax, ay, az);
+    }
+
     const magRot = Math.hypot(alpha, beta, gamma);
     const magAcc = Math.hypot(ax, ay, az);
 
@@ -157,6 +179,68 @@ export class GestureDetector {
       this.burstQuietStart = 0;
     }
     return null;
+  }
+
+  // ML pipeline: classify a sliding window through a small CNN. The model
+  // emits per-class probabilities; we EMA-smooth them and fire when a
+  // non-none class crosses the firing threshold.
+  _ingestML(now, alpha, beta, gamma, ax, ay, az) {
+    this.mlHistory.push({ t: now, alpha, beta, gamma, ax, ay, az });
+    const cutoff = now - ML_WINDOW_MS;
+    while (this.mlHistory.length && this.mlHistory[0].t < cutoff) {
+      this.mlHistory.shift();
+    }
+    if (now - this.lastFireAt < ML_REFRACTORY_MS) return null;
+    if (this.mlHistory.length < 4) return null;
+    if (now - this.mlLastEvalAt < ML_EVAL_INTERVAL_MS) return null;
+    this.mlLastEvalAt = now;
+
+    const winLen = this.model.input.window_len;
+    const window = this._buildMLWindow(winLen);
+    const probs = runModel(this.model, window);
+    for (let i = 0; i < probs.length; i++) {
+      this.mlSmooth[i] = ML_SMOOTH_ALPHA * probs[i] + (1 - ML_SMOOTH_ALPHA) * this.mlSmooth[i];
+    }
+
+    let best = 0, bestProb = this.mlSmooth[0];
+    for (let i = 1; i < this.mlSmooth.length; i++) {
+      if (this.mlSmooth[i] > bestProb) { bestProb = this.mlSmooth[i]; best = i; }
+    }
+    if (best === 0) return null;
+    const fireThresh = ML_FIRE_PROB / Math.max(0.3, this.sensitivity);
+    if (this.mlSmooth[best] < fireThresh) return null;
+
+    this.lastFireAt = now;
+    let direction = this.model.classes[best];
+    if (this.invertH && direction === "right") direction = "left";
+    else if (this.invertH && direction === "left") direction = "right";
+    if (this.invertV && direction === "down") direction = "up";
+
+    this.mlSmooth = [0, 0, 0, 0];
+    this.mlHistory = [];
+
+    const result = {
+      direction,
+      peakMag: Math.round(bestProb * 100),
+      axis: "ml",
+    };
+    this.lastDebug = result;
+    return result;
+  }
+
+  _buildMLWindow(T) {
+    const t0 = this.mlHistory[0].t;
+    const tEnd = this.mlHistory[this.mlHistory.length - 1].t;
+    const span = Math.max(1, tEnd - t0);
+    const out = new Array(T);
+    let j = 0;
+    for (let i = 0; i < T; i++) {
+      const t = t0 + span * (i / (T - 1));
+      while (j < this.mlHistory.length - 1 && this.mlHistory[j + 1].t <= t) j++;
+      const s = this.mlHistory[j];
+      out[i] = [s.alpha, s.beta, s.gamma, s.ax, s.ay, s.az];
+    }
+    return out;
   }
 
   _classify() {

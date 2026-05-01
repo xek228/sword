@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node server/index.js",
-    "lint": "node --check server/index.js && node --check server/gestureDetector.js && node --check public/game.js && node --check public/controller.js",
+    "lint": "node --check server/index.js && node --check server/gestureDetector.js && node --check server/swingModel.js && node --check public/game.js && node --check public/controller.js",
     "test": "node test/gesture.test.mjs"
   },
   "dependencies": {

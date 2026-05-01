@@ -10,6 +10,14 @@ import url from "node:url";
 import { WebSocketServer } from "ws";
 import zlib from "node:zlib";
 import { GestureDetector } from "./gestureDetector.js";
+import { tryLoadDefault as tryLoadModel } from "./swingModel.js";
+
+const SWING_MODEL = tryLoadModel();
+if (SWING_MODEL) {
+  console.log(`[gesture] ML mode: loaded model with classes ${SWING_MODEL.classes.join(",")}`);
+} else {
+  console.log(`[gesture] rule mode: no public/model.json found; using rule-based classifier`);
+}
 
 // Minimal store-only ZIP writer. Enough to bundle a handful of JSON files
 // for the user to ship back. No compression, no fancy metadata.
@@ -239,7 +247,7 @@ function getRoom(id) {
   if (!r) {
     r = {
       controllers: new Set(), games: new Set(),
-      detector: new GestureDetector(),
+      detector: new GestureDetector({ model: SWING_MODEL }),
       // One active recording per room. ws is the controller that owns it.
       recording: null,
     };
