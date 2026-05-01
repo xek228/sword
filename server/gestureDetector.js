@@ -55,12 +55,21 @@ const MIN_ROT_PEAK = 600;   // all 11 real recordings have mag_rot_max >= 680
 const MIN_ACC_PEAK = 18;    // all 11 real recordings have mag_acc_max >= 26
 const RIGHT_ACC_THRESH = 38; // between chop/left max (~35) and right min (~40)
 
-// ML-mode parameters
-const ML_EVAL_INTERVAL_MS = 50;
-const ML_WINDOW_MS = 700;
-const ML_FIRE_PROB = 0.6;
-const ML_REFRACTORY_MS = 250;
-const ML_SMOOTH_ALPHA = 0.5;
+// ML-mode parameters.
+//
+// Strategy: instead of streaming the model on every window, we wait for
+// a *peak* in rotation magnitude (as a cheap event trigger), then
+// classify a window centered on the peak. This matches what the model
+// was trained on (windows centered on rotation peaks) and avoids
+// out-of-distribution inputs that produce phantom fires during the
+// rising / decaying edges of a swing or its recoil.
+const ML_BUFFER_MS = 1000;          // rolling history we keep
+const ML_PEAK_LAG_MS = 350;         // how far back to look for a "peak now"
+const ML_PEAK_MIN_MAG = 600;        // min rotation magnitude to count as a peak
+const ML_PEAK_NEIGHBOURS = 3;       // local-max test radius (in samples)
+const ML_FIRE_PROB = 0.55;
+const ML_FIRE_MARGIN = 0.15;        // winner - none
+const ML_REFRACTORY_MS = 600;
 
 export class GestureDetector {
   constructor(opts = {}) {
@@ -72,9 +81,7 @@ export class GestureDetector {
     this.history = []; // rolling window of {t,alpha,beta,gamma,magRot,magAcc}
 
     this.model = opts.model || null;
-    this.mlSmooth = [0, 0, 0, 0];
-    this.mlLastEvalAt = 0;
-    this.mlHistory = []; // raw {t, alpha, beta, gamma, ax, ay, az}
+    this.mlHistory = []; // {t, alpha, beta, gamma, ax, ay, az, magRot}
 
     this._reset();
 
@@ -181,34 +188,55 @@ export class GestureDetector {
     return null;
   }
 
-  // ML pipeline: classify a sliding window through a small CNN. The model
-  // emits per-class probabilities; we EMA-smooth them and fire when a
-  // non-none class crosses the firing threshold.
+  // ML pipeline: peak-triggered classifier.
+  //
+  // Maintain a rolling 1.0s buffer. After every new sample, look at the
+  // sample ~350ms ago and check if it's a local maximum of rotation
+  // magnitude. If yes (and it exceeds a sensitivity-scaled floor), build
+  // a window centered on it and run the model. This guarantees the
+  // window's distribution matches the training data and avoids spurious
+  // fires during the rising/decaying edges of a swing.
   _ingestML(now, alpha, beta, gamma, ax, ay, az) {
-    this.mlHistory.push({ t: now, alpha, beta, gamma, ax, ay, az });
-    const cutoff = now - ML_WINDOW_MS;
+    const magRot = Math.hypot(alpha, beta, gamma);
+    this.mlHistory.push({ t: now, alpha, beta, gamma, ax, ay, az, magRot });
+    const cutoff = now - ML_BUFFER_MS;
     while (this.mlHistory.length && this.mlHistory[0].t < cutoff) {
       this.mlHistory.shift();
     }
     if (now - this.lastFireAt < ML_REFRACTORY_MS) return null;
-    if (this.mlHistory.length < 4) return null;
-    if (now - this.mlLastEvalAt < ML_EVAL_INTERVAL_MS) return null;
-    this.mlLastEvalAt = now;
+
+    const hist = this.mlHistory;
+    const targetT = now - ML_PEAK_LAG_MS;
+    // Find the candidate index closest to targetT.
+    let pIdx = -1, bestDt = Infinity;
+    for (let i = 0; i < hist.length; i++) {
+      const dt = Math.abs(hist[i].t - targetT);
+      if (dt < bestDt) { bestDt = dt; pIdx = i; }
+    }
+    if (pIdx < 0) return null;
+    if (pIdx < ML_PEAK_NEIGHBOURS) return null;
+    if (pIdx > hist.length - 1 - ML_PEAK_NEIGHBOURS) return null;
+
+    const peak = hist[pIdx];
+    const peakFloor = ML_PEAK_MIN_MAG / Math.max(0.3, this.sensitivity);
+    if (peak.magRot < peakFloor) return null;
+    for (let k = 1; k <= ML_PEAK_NEIGHBOURS; k++) {
+      if (hist[pIdx - k].magRot >= peak.magRot) return null;
+      if (hist[pIdx + k].magRot >= peak.magRot) return null;
+    }
 
     const winLen = this.model.input.window_len;
-    const window = this._buildMLWindow(winLen);
-    const probs = runModel(this.model, window);
-    for (let i = 0; i < probs.length; i++) {
-      this.mlSmooth[i] = ML_SMOOTH_ALPHA * probs[i] + (1 - ML_SMOOTH_ALPHA) * this.mlSmooth[i];
-    }
+    const window = this._buildWindowAroundPeak(pIdx, winLen);
+    if (!window) return null;
 
-    let best = 0, bestProb = this.mlSmooth[0];
-    for (let i = 1; i < this.mlSmooth.length; i++) {
-      if (this.mlSmooth[i] > bestProb) { bestProb = this.mlSmooth[i]; best = i; }
+    const probs = runModel(this.model, window);
+    let best = 0;
+    for (let i = 1; i < probs.length; i++) {
+      if (probs[i] > probs[best]) best = i;
     }
     if (best === 0) return null;
-    const fireThresh = ML_FIRE_PROB / Math.max(0.3, this.sensitivity);
-    if (this.mlSmooth[best] < fireThresh) return null;
+    if (probs[best] < ML_FIRE_PROB) return null;
+    if (probs[best] - probs[0] < ML_FIRE_MARGIN) return null;
 
     this.lastFireAt = now;
     let direction = this.model.classes[best];
@@ -216,28 +244,36 @@ export class GestureDetector {
     else if (this.invertH && direction === "left") direction = "right";
     if (this.invertV && direction === "down") direction = "up";
 
-    this.mlSmooth = [0, 0, 0, 0];
-    this.mlHistory = [];
+    // Drop history up to the peak so the next swing starts fresh.
+    this.mlHistory = hist.slice(pIdx + 1);
 
     const result = {
       direction,
-      peakMag: Math.round(bestProb * 100),
+      peakMag: Math.round(probs[best] * 100),
       axis: "ml",
     };
     this.lastDebug = result;
     return result;
   }
 
-  _buildMLWindow(T) {
-    const t0 = this.mlHistory[0].t;
-    const tEnd = this.mlHistory[this.mlHistory.length - 1].t;
-    const span = Math.max(1, tEnd - t0);
+  _buildWindowAroundPeak(peakIdx, T) {
+    // We want T uniformly-spaced samples centered on peakIdx, spanning
+    // (T-1)/INPUT_HZ seconds (≈ 700ms for T=42 at 60Hz).
+    const INPUT_HZ = 60;
+    const spanMs = ((T - 1) / INPUT_HZ) * 1000;
+    const hist = this.mlHistory;
+    const tCenter = hist[peakIdx].t;
+    const tStart = tCenter - spanMs / 2;
+    const tEnd   = tCenter + spanMs / 2;
+    if (hist[0].t > tStart) return null;
+    if (hist[hist.length - 1].t < tEnd) return null;
+
     const out = new Array(T);
     let j = 0;
     for (let i = 0; i < T; i++) {
-      const t = t0 + span * (i / (T - 1));
-      while (j < this.mlHistory.length - 1 && this.mlHistory[j + 1].t <= t) j++;
-      const s = this.mlHistory[j];
+      const t = tStart + (spanMs * i) / (T - 1);
+      while (j < hist.length - 1 && hist[j + 1].t <= t) j++;
+      const s = hist[j];
       out[i] = [s.alpha, s.beta, s.gamma, s.ax, s.ay, s.az];
     }
     return out;

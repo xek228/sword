@@ -152,48 +152,49 @@ def extract_labeled_windows(grids: list[tuple[str, np.ndarray]],
     X = []
     y = []
     half = WINDOW_LEN // 2
+    # Live inference centers windows on detected rotation-magnitude peaks,
+    # so the model only ever sees windows where the peak is in the middle.
+    # Small jitter helps tolerate ±1-2 samples of peak-detection error and
+    # natural variation in where the peak falls during a swing.
+    OFFSETS = [-4, -2, 0, 2, 4]
     for label, g in grids:
         T = g.shape[0]
         if label in ("right", "left", "down"):
             peaks = find_peaks(g)
             if not peaks:
                 continue
-            # Use the LARGEST peak as THE peak for an isolated recording
-            # (small bursts in pre/post may register too but we trust the
-            # main one).
+            # Use the LARGEST peak as THE peak for an isolated recording.
             rot_mag = np.linalg.norm(g[:, 0:3], axis=1)
             best = max(peaks, key=lambda i: rot_mag[i])
-            for cls_label, p in [(label, best)]:
-                s = p - half
-                e = p + (WINDOW_LEN - half)
+            for off in OFFSETS:
+                s = best - half + off
+                e = s + WINDOW_LEN
                 if s < 0 or e > T:
                     continue
                 X.append(g[s:e])
-                y.append(CLASS_TO_IDX[cls_label])
+                y.append(CLASS_TO_IDX[label])
 
         elif label.startswith("combo_"):
             seq = label[len("combo_"):].split("-")
             seq = [c for c in seq if c in CLASS_TO_IDX]
             peaks = find_peaks(g)
-            # Pair each peak with the next sequence label, in order.
-            # If we get more peaks than sequence items, ignore extra.
-            # If we get fewer, only label what we have.
             n = min(len(peaks), len(seq))
             for k in range(n):
                 p = peaks[k]
                 cls_label = seq[k]
-                s = p - half
-                e = p + (WINDOW_LEN - half)
-                if s < 0 or e > T:
-                    continue
-                X.append(g[s:e])
-                y.append(CLASS_TO_IDX[cls_label])
+                for off in OFFSETS:
+                    s = p - half + off
+                    e = s + WINDOW_LEN
+                    if s < 0 or e > T:
+                        continue
+                    X.append(g[s:e])
+                    y.append(CLASS_TO_IDX[cls_label])
 
         elif label == "bg":
-            # Sliding 0.7s windows, every ~0.3s. Skip any window whose
+            # Sliding 0.7s windows, every ~0.2s. Skip any window whose
             # rotation magnitude approaches a swing (defensive: if user
             # accidentally swung during bg, skip that bit).
-            stride = int(0.3 * INPUT_HZ)
+            stride = int(0.2 * INPUT_HZ)
             for s in range(0, T - WINDOW_LEN + 1, stride):
                 w = g[s:s + WINDOW_LEN]
                 if np.linalg.norm(w[:, 0:3], axis=1).max() > 400:
@@ -203,6 +204,25 @@ def extract_labeled_windows(grids: list[tuple[str, np.ndarray]],
 
         elif skip_unknown:
             continue
+
+    # Add synthetic "approach" windows around each labeled peak: the
+    # rest period BEFORE the swing starts. These also map to "none" and
+    # teach the model that pre-burst quiet does NOT predict a swing.
+    for label, g in grids:
+        if label not in ("right", "left", "down") and not label.startswith("combo_"):
+            continue
+        peaks = find_peaks(g)
+        if not peaks:
+            continue
+        rot_mag = np.linalg.norm(g[:, 0:3], axis=1)
+        # Quiet period: window ends >= 25 frames before the first peak.
+        first_peak = min(peaks)
+        for s in range(0, first_peak - WINDOW_LEN - 5, int(0.15 * INPUT_HZ)):
+            w = g[s:s + WINDOW_LEN]
+            if np.linalg.norm(w[:, 0:3], axis=1).max() > 300:
+                continue
+            X.append(w)
+            y.append(CLASS_TO_IDX["none"])
 
     if not X:
         return np.zeros((0, WINDOW_LEN, NUM_CHANNELS), dtype=np.float32), np.zeros((0,), dtype=np.int64)
